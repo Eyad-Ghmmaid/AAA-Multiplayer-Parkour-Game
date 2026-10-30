@@ -1,0 +1,9 @@
+diff a/Assets/Fantacode Studios Backup/Third Person Controller/Scripts/System/PlayerController.cs b/Assets/Fantacode Studios Backup/Third Person Controller/Scripts/System/PlayerController.cs	(rejected hunks)
+@@ -162,6 +162,7 @@
+             {
+                 foreach (var script in CoreSystems)
+                 {
++                    if (FocusedScript != null) return;
+                     if (script.enabled && script is not EquippableSystemBase)
+                         script.HandleUpdate();
+                 }

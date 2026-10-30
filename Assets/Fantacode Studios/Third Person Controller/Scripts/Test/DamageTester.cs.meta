@@ -1,0 +1,18 @@
+fileFormatVersion: 2
+guid: 0c1c6b5900bedc947928cf49d39196f7
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences: []
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 387610
+  packageName: FS Parkour And Climbing System 2
+  packageVersion: 2.0.2
+  assetPath: Assets/Fantacode Studios/Third Person Controller/Scripts/Test/DamageTester.cs
+  uploadId: 996598

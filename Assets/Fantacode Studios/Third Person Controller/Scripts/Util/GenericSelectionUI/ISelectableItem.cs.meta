@@ -1,0 +1,18 @@
+fileFormatVersion: 2
+guid: c9f64d8e92d28764fb1674e53e85de1d
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences: []
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 387610
+  packageName: FS Parkour And Climbing System 2
+  packageVersion: 2.0.2
+  assetPath: Assets/Fantacode Studios/Third Person Controller/Scripts/Util/GenericSelectionUI/ISelectableItem.cs
+  uploadId: 996598

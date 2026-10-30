@@ -1,0 +1,283 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 1019dde732d888640a0554442a20fab9, type: 3}
+  m_Name: BlackboardKeyContainer
+  m_EditorClassIdentifier: 
+  keys:
+  - id: b9084140-d503-44c5-80ea-8f7a37cdcd53
+    name: IsTargetSet
+    type: 1
+    description: 
+  - id: 4cd25527-3d77-457a-8fcc-f90e9b1482b2
+    name: TargetPosition
+    type: 5
+    description: 
+  - id: 2ec2dc99-c149-4d3d-beb7-6266029e6cc0
+    name: New String
+    type: 3
+    description: 
+  - id: 2e37ea32-364a-41f9-bca8-0fabf1cc1f4d
+    name: FlankRequested
+    type: 1
+    description: 
+  - id: 81920035-d4fb-429f-afd3-86bf86bc2a21
+    name: IsTargetInPreferredRange
+    type: 1
+    description: 
+  - id: 55914a20-21d1-4927-9a1b-c50acba88918
+    name: DistanceToTarget
+    type: 0
+    description: 
+  - id: b3fef841-3f3f-4ea8-bc27-476bd1ee0356
+    name: IsDead
+    type: 1
+    description: 
+  - id: 65f8b026-562a-4aee-92dc-247ad39a5fe0
+    name: TriggerAuthoredBehavior
+    type: 1
+    description: 
+  - id: 9eca3643-710b-4ef6-91f7-f6cb23316f5a
+    name: CanInterruptBehavior
+    type: 1
+    description: Set from the AI Behavior's Interruptible setting when an authored
+      behavior starts
+  - id: a7c3e1f0-8b2d-4d5a-9e6f-1a2b3c4d5e6f
+    name: AuthoredWaypoints
+    type: 6
+    description: Root Transform containing child waypoints
+  - id: 18d24d65-bcaf-4d17-8c39-349031eb4571
+    name: Health
+    type: 0
+    description: 
+  - id: b3c04d1e-d382-427a-a45d-09a8d3797d61
+    name: PatrolWaypoints
+    type: 6
+    description: 
+  - id: 447cd9a4-6a8c-4288-bf5d-386ac87cc1f3
+    name: AttackRequested
+    type: 1
+    description: 
+  - id: 330e987b-57a8-4990-ad57-b6abe56bceb4
+    name: IsKnockedDown
+    type: 1
+    description: 
+  - id: 2120903c-65a9-45a3-a976-277bf2aa1079
+    name: IsTargetReachable
+    type: 1
+    description: 
+  - id: 31d81548-ba79-477a-bda8-c420f9eeb5c7
+    name: WasHurt
+    type: 1
+    description: 
+  - id: c32651d4-d631-407a-b23a-8acd3bd31aba
+    name: Investigate
+    type: 1
+    description: 
+  - id: 6ecf6ebc-10bb-4aa0-a088-7c0d3e0dcf9e
+    name: InvestigatePosition
+    type: 5
+    description: 
+  - id: 5346be31-7be1-46b4-801e-d8ddf5b568f9
+    name: SearchPosition
+    type: 5
+    description: 
+  - id: 8416c01c-e055-4a83-bd5b-d79a0d77f1ae
+    name: IsAlertedInvestigation
+    type: 1
+    description: 
+  - id: fb50bd26-d606-4c21-9d95-91a2c044fec9
+    name: AuthoredBehavior
+    type: 8
+    description: 
+  - id: b26c20f3-1e22-4dfa-a471-6aacddd1386f
+    name: IntroBehavior
+    type: 8
+    description: 
+  - id: c075b79e-baa0-49f3-b805-29e817823f2e
+    name: IdleOverrideBehavior
+    type: 8
+    description: 
+  - id: 871ae272-42c4-4c8e-85b3-6252a8162f71
+    name: InSituation
+    type: 1
+    description: 
+  - id: f8b40207-a3b3-4a73-af57-bc45ca00a944
+    name: IsSituationLeader
+    type: 1
+    description: 
+  - id: 7bd5631e-07c0-4aa5-a8f1-8b33df836154
+    name: RestartInvestigation
+    type: 1
+    description: 
+  - id: 8ea89f62-912e-4d9a-b637-988def565724
+    name: NormalLookAround
+    type: 9
+    description: 
+  - id: f4006eb7-c1a3-4726-815c-0c41697259b2
+    name: AlertedLookAround
+    type: 9
+    description: 
+  - id: 6438eab6-ac3c-4f0c-9c4b-9fcd3a518033
+    name: MoveToInvestigatePos
+    type: 1
+    description: 
+  - id: e1e24b4b-4e0a-49d9-90af-458067b6337d
+    name: ExitInvestigationBehavior
+    type: 8
+    description: 
+  - id: 1c26b04e-ad1a-4808-a0ae-67a06a0eb0de
+    name: IsSwimming
+    type: 1
+    description: 
+  - id: 94c79759-3c08-4ad4-b001-13aad699c821
+    name: ChaseTarget
+    type: 6
+    description: 
+  - id: 76d48b09-8273-4b07-ae76-0c21ac92fe1c
+    name: Chase
+    type: 1
+    description: 
+  - id: 208caab0-db79-4866-9787-a330b6dad770
+    name: AlertedIdleClip
+    type: 9
+    description: 
+  - id: 85deb4ba-b41f-429b-aa92-e57ac022e060
+    name: AlertedWalkClip
+    type: 9
+    description: 
+  - id: 7faef49f-247c-4ca2-8883-f713170a36d5
+    name: AlertedRunClip
+    type: 9
+    description: 
+  - id: e1187f90-6601-40eb-95fa-423fd35a8551
+    name: FollowTarget
+    type: 6
+    description: 
+  - id: 29ed98c2-88ed-41eb-8f9e-96b2928a54ca
+    name: PatrolSpeed
+    type: 0
+    description: 
+  - id: d19997e9-8c37-47ea-9094-945242b0cc0c
+    name: IsCombatTypeMelee
+    type: 1
+    description: 
+  - id: fed94909-3391-42b1-a0b9-91a8e79fba42
+    name: IsGettingHit
+    type: 1
+    description: 
+  - id: 86d6037a-124d-4177-a199-15034148167b
+    name: IsPaused
+    type: 1
+    description: 
+  - id: 09c9b736-bd43-436d-b863-d4b7068744c1
+    name: IsTargetUnreachableByGround
+    type: 1
+    description: 
+  - id: 06506ef3-69c4-4a86-a48f-b5c21251767e
+    name: IsRagdolling
+    type: 1
+    description: 
+  - id: f0515b05-24d3-4ce8-860b-9775c0f7a6cb
+    name: FollowWhileWarning
+    type: 1
+    description: 
+  - id: fe369865-9054-4f8e-90a4-1c670f4d788f
+    name: WarnTarget
+    type: 6
+    description: 
+  - id: d165e8fd-a33c-4cdb-a157-14f91ddaff26
+    name: TargetVehicle
+    type: 6
+    description: The vehicle the AI is heading for or chasing.
+  - id: 0862c577-129c-4d7a-bc40-8d1d885eeaab
+    name: TargetSeat
+    type: 6
+    description: The seat it means to take. Unset means any free seat on the target
+      vehicle.
+  - id: a0ae7d3c-812d-46e8-b41e-8f72e266c3af
+    name: CurrentVehicle
+    type: 6
+    description: The vehicle it is actually aboard. Set once seated, cleared once
+      out.
+  - id: 4f7b0e4e-fc5e-4b18-95ce-c3c91f6bf574
+    name: CurrentSeat
+    type: 6
+    description: The seat it actually occupies. Set once seated, cleared once out.
+  - id: 5fbb4341-c0eb-43c4-99e2-5e2defed448c
+    name: VehicleWaypoints
+    type: 6
+    description: Root of the waypoint network handed to the vehicle's own AI driver.
+  - id: fb70b416-b6c0-44b8-8f21-4d9e69992324
+    name: EnterVehicle
+    type: 1
+    description: 'Order: get into the target vehicle.'
+  - id: b5407297-09cc-42a9-8167-eca5ea4f4f56
+    name: ExitVehicle
+    type: 1
+    description: 'Order: get out of the current vehicle. Cleared by Exit Vehicle
+      once carried out.'
+  - id: 3d3309dc-8c96-4f4d-917f-a80996fc3d66
+    name: DriveVehicle
+    type: 1
+    description: 'Order: drive the vehicle this character is at the wheel of.'
+  - id: 54ea0a39-b085-4e9f-b697-da3fae41a172
+    name: ChaseVehicleToEnter
+    type: 1
+    description: 'Order: run after the target vehicle to get back into it.'
+  - id: 6a9eb88e-6aee-4027-8a8f-df9ab14743fb
+    name: IsInVehicle
+    type: 1
+    description: Aboard a vehicle, driver or passenger.
+  - id: 781344d4-65c1-4093-b2c2-6961e0fa7bd8
+    name: IsDriving
+    type: 1
+    description: At the wheel with the engine running. A passenger is IsInVehicle
+      but not this.
+  - id: 7be314f7-0d4a-4cac-a1fe-5edca1f96a78
+    name: WasPulledFromVehicle
+    type: 1
+    description: Another character hauled this AI out of its seat.
+  - id: e186c6e7-82fc-4b98-ae2c-615a0bdda847
+    name: VehicleEntryFailed
+    type: 1
+    description: A boarding attempt ended without seating the character.
+  - id: b1f7ecb8-ce8b-46ac-85ee-2a4fdc303d29
+    name: VehicleChaseGaveUp
+    type: 1
+    description: A chase ran out of time or distance without catching the vehicle.
+  - id: 2c53cf1d-f884-4ea5-8517-90dcb66a2224
+    name: DistanceToVehicle
+    type: 0
+    description: Distance to the target vehicle, refreshed every tick while chasing.
+  - id: b490864a-6ac9-4446-9746-207d5439cb23
+    name: VehicleChaseSpeed
+    type: 0
+    description: Overrides the chase speed authored on the state. Ignored when not
+      positive.
+  - id: aa10d304-d128-4df6-94ba-1e06be8b52e9
+    name: VehicleChaseTimeout
+    type: 0
+    description: Overrides the chase timeout authored on the state. Ignored when
+      not positive.
+  - id: ea251553-ad02-451e-b641-ffc0a407c753
+    name: VehicleChaseMaxDistance
+    type: 0
+    description: Overrides the chase give-up distance authored on the state. Ignored
+      when not positive.
+  - id: bf36f55a-63d1-463f-86c1-7788e9f4884d
+    name: VehicleDestination
+    type: 5
+    description: Where to drive to when no waypoint network is used.
+  - id: aa5da80e-af17-4791-83cd-4de9303f1bc5
+    name: LoopVehicleWaypoints
+    type: 1
+    description: Whether the vehicle's AI driver loops its waypoint route.

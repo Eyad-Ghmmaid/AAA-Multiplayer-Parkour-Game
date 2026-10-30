@@ -1,0 +1,16 @@
+fileFormatVersion: 2
+guid: 5907a92ba1206d045a0db659b78c1972
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 7400000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 387610
+  packageName: FS Parkour And Climbing System 2
+  packageVersion: 2.0.2
+  assetPath: Assets/Fantacode Studios/Third Person Controller/Animations/Locomotion/MultiDirectional
+    Animations/Walk Back.anim
+  uploadId: 996598

@@ -1,0 +1,18 @@
+fileFormatVersion: 2
+guid: f8696a115b068894c915f6a1621e6063
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences: []
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 387610
+  packageName: FS Parkour And Climbing System 2
+  packageVersion: 2.0.2
+  assetPath: Assets/Fantacode Studios/Parkour & Climbing System/Scripts/Parkour System/ParkourInputManager.cs
+  uploadId: 996598

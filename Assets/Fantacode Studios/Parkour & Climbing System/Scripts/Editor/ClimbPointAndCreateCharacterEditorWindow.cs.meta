@@ -1,0 +1,18 @@
+fileFormatVersion: 2
+guid: d164ad86cd9f5a24c9a076c597ecb191
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences: []
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 387610
+  packageName: FS Parkour And Climbing System 2
+  packageVersion: 2.0.2
+  assetPath: Assets/Fantacode Studios/Parkour & Climbing System/Scripts/Editor/ClimbPointAndCreateCharacterEditorWindow.cs
+  uploadId: 996598

@@ -1,0 +1,18 @@
+fileFormatVersion: 2
+guid: d3fd63cd1208ba840aba69e1a5268b3e
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences: []
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 387610
+  packageName: FS Parkour And Climbing System 2
+  packageVersion: 2.0.2
+  assetPath: Assets/Fantacode Studios/Third Person Controller/Equip And Attach/Scripts/Equip/EquipSettings.cs
+  uploadId: 996598

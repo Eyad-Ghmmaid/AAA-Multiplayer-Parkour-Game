@@ -1,0 +1,40 @@
+﻿[Ll]ibrary/
+[Tt]emp/
+[Oo]bj/
+[Bb]uild/
+[Bb]uilds/
+[Ll]ogs/
+[Uu]ser[Ss]ettings/
+[Mm]emoryCaptures/
+[Rr]ecordings/
+
+# Unity Build-Ausgaben
+/1.0 ParkourGameplay/
+
+# IDE-Dateien
+.vs/
+.idea/
+.vscode/
+
+# Betriebssystem
+.DS_Store
+Thumbs.db
+
+# Alte Sicherungsdateien
+.gitignore.old-backup
+.git-old-backup
+
+# Crash-Dateien
+sysinfo.txt
+*.stackdump
+/1.0 ParkourGameplay_Data/
+/1.1 Build GamePlay/
+/1.0 ParkourGameplay.7z
+
+# Automatisch erzeugte Projektdateien
+*.csproj
+*.sln
+*.slnx
+*.user
+*.userprefs
+desktop.ini

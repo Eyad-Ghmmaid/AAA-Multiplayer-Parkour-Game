@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 3f8443d94eebc1d4d86420085f2d67e8
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 2655988077585873504
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 387610
+  packageName: FS Parkour And Climbing System 2
+  packageVersion: 2.0.2
+  assetPath: Assets/Fantacode Studios/Third Person Controller/Presets/New Locomotion.preset
+  uploadId: 996598

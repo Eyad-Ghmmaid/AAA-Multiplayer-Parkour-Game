@@ -1,0 +1,16 @@
+fileFormatVersion: 2
+guid: edb2bd230abef254fb1e4ccb24fb9bee
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 2100000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 387610
+  packageName: FS Parkour And Climbing System 2
+  packageVersion: 2.0.2
+  assetPath: Assets/Fantacode Studios/Third Person Controller/Character/Materials/NPC
+    2/M_Armature_Legs.mat
+  uploadId: 996598

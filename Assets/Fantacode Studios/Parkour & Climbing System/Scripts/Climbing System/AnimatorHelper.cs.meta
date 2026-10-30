@@ -1,0 +1,19 @@
+fileFormatVersion: 2
+guid: e0ce6abfb3e65c140b98a84192caf3a2
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences: []
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 387610
+  packageName: FS Parkour And Climbing System 2
+  packageVersion: 2.0.2
+  assetPath: Assets/Fantacode Studios/Parkour & Climbing System/Scripts/Climbing
+    System/AnimatorHelper.cs
+  uploadId: 996598

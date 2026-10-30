@@ -1,0 +1,18 @@
+fileFormatVersion: 2
+guid: d18f49be03a9f0a42b23247ea4cf5a1d
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences: []
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 387610
+  packageName: FS Parkour And Climbing System 2
+  packageVersion: 2.0.2
+  assetPath: Assets/Fantacode Studios/Third Person Controller/Scripts/Core/Attributes/HideInInspectorEnumAttribute.cs
+  uploadId: 996598

@@ -1,0 +1,18 @@
+fileFormatVersion: 2
+guid: 512c2d16027874341b6d5fd5ed92f7e6
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences: []
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 387610
+  packageName: FS Parkour And Climbing System 2
+  packageVersion: 2.0.2
+  assetPath: Assets/Fantacode Studios/Third Person Controller/Interaction Core/Scripts/InteractionAnimation.cs
+  uploadId: 996598
