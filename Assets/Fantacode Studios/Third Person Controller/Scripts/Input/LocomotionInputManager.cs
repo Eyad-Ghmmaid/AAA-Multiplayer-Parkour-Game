@@ -13,6 +13,9 @@ namespace FS_LocomotionSystem
         // manager must then avoid polling hardware and overwriting those values.
         public bool useExternalInput;
 
+        /// <summary>Set locally during the networked race countdown to suppress gameplay input.</summary>
+        public bool RaceInputLocked { get; set; }
+
         [SerializeField] LocomotionUI locomotionUI;
         [SerializeField] UIJoystick moveJoystick;
         [SerializeField] MobileCameraInputController cameraInputArea;
@@ -95,6 +98,25 @@ namespace FS_LocomotionSystem
             HandleSprint();
             HandleCrouch();
             HandleThrow();
+
+            if (RaceInputLocked)
+            {
+                DirectionInput = Vector2.zero;
+                JumpKeyDown = false;
+                JumpHold = false;
+                Drop = false;
+                ToggleRun = false;
+                SprintKey = false;
+                Crouch = false;
+                ItemThrowDown = false;
+                ItemThrowHold = false;
+                ItemThrowUp = false;
+                ItemThrowCancelDown = false;
+                CycleToPreviousItem = false;
+                CycleToNextItem = false;
+                QuickSwitchItemDown = false;
+                QuickSwitchItemUp = false;
+            }
         }
 
         public void HandleDirectionalInput()

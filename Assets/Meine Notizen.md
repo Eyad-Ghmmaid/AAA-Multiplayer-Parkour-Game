@@ -107,3 +107,8 @@
     ## CMP-Lobby mit zwei Instanzen testen: Alles funktioniert aber man wenn der Host Player Prefab Yellow auswählt, und der andere Spieler red auswählt, bekommen beide Players das gleiche Farbe, also man kann nicht unterschiedliche Charaktere auswählen. 
 
 
+# Checkoint Einrichtung
+1- Öffne jede Parkour-Map und erstelle pro Checkpoint ein Objekt mit BoxCollider und RaceCheckpoint. Der Collider wird automatisch als Trigger gesetzt.
+2- Vergib Checkpoint-Indizes entlang der Strecke in Reihenfolge: 1, 2, 3 usw. Der Checkpoint mit dem höchsten Index, den ein Spieler erreicht hat, ist sein Respawn-Ziel.
+3- Für einen genauen Respawn-Punkt kannst du unter dem Checkpoint ein leeres Kindobjekt wie RespawnPoint anlegen. Platziere es auf sicherem Boden und richte es zur Strecke aus; ziehe es dann in das Feld Respawn Point des RaceCheckpoint. Ohne zugewiesenes Kindobjekt wird die Position des Checkpoint-Objekts verwendet.
+4- Erstelle unterhalb der Map einen großen Trigger mit BoxCollider und RaceRespawnTrigger. Dimensioniere ihn so, dass fallende Spieler sicher hineingeraten.

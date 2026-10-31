@@ -72,7 +72,12 @@ Erst nach Abnahme der Etappen 1–3 werden Vault, Predictive Jump, Climb, Hang u
 
 ### Etappe 5 — Wettkampf und Komfortfunktionen
 
-Erst danach: Countdown, Checkpoints, Zielzeit, Rangliste, Rematch, Voice-Chat-Feinschliff und ggf. Hostmigration. Für verbindliche Ranglisten wird die Eignung von Shared Mode neu geprüft; Ergebnisse aus einem Peer-authoritativen Modus sind nicht serverseitig vertrauenswürdig.
+- **Bestätigt:** Zwei unabhängige Clients sehen und steuern ihre Spieler samt Animationen korrekt. Szenenwechsel, Leave, erneutes Erstellen und Beitreten wurden ebenfalls erfolgreich getestet.
+- **Implementiert, Editor-Einrichtung offen:** Netzwerkweiter Ready-Status, Teleport aller bereiten Spieler an eine Formation, gemeinsamer 3-Sekunden-Countdown, lokale Eingabesperre und individuelle Zeitmessung. Der Ready-Button ruft `InGame_Manager.ToggleReady()` über `RaceReadyButtonUI` auf.
+- **Pro Map einzurichten:** Ein leeres `RaceStartPoint`-Objekt auf dem Boden am Start platzieren. Seine Vorwärtsrichtung zeigt die Laufrichtung. `Player Spacing`, `Row Spacing` und `Players Per Row` lassen sich pro Map einstellen. Ein separates Zielobjekt mit `BoxCollider` und `RaceFinishTrigger` beendet die Zeit beim Betreten.
+- **Nächster Prüfschritt:** Ready-Button und Status-Text in der Game-UI mit `RaceReadyButtonUI` verbinden; in jeder Map `RaceStartPoint` und Ziellinie platzieren. Dann mit zwei Clients prüfen, dass beide Spieler erst bei vollständiger Bereitschaft nebeneinander aufgestellt werden und denselben Countdown erhalten.
+- Anschließend Checkpoints/Respawn, Ergebnisanzeige und Rematch ergänzen.
+- Für verbindliche Ranglisten wird die Eignung von Shared Mode neu geprüft; Ergebnisse aus einem Peer-authoritativen Modus sind nicht serverseitig vertrauenswürdig.
 
 ## Vorgehen zur Fehlervermeidung
 
@@ -87,4 +92,4 @@ Erst danach: Countdown, Checkpoints, Zielzeit, Rangliste, Rematch, Voice-Chat-Fe
 
 ## Nächster konkreter Schritt
 
-Etappe 0 im Unity-Editor abschließen und dann Etappe 1 auf einer separaten FS-Prefab-Kopie beginnen. Vor dem Umbau besonders prüfen, welche Fusion-Komponenten die CMP-Spieler-Prefabs tatsächlich enthalten, wie das FS-Prefab lokal funktioniert und ob die laufende Fusion-Prefab-Konfiguration das neue Prefab aufnehmen kann. Erst wenn diese drei Punkte bestätigt sind, den CMP-Spawn auf den FS-Netzwerkspieler umstellen.
+UI-Elemente verbinden und Startpunkt/Ziel in der ersten Testmap konfigurieren. Danach den Ready-Ablauf und das Rennen in zwei Builds prüfen.

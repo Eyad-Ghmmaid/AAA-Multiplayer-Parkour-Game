@@ -15,6 +15,9 @@ namespace FS_ParkourSystem
         //public bool Drop { get; set; }
         public bool JumpFromHang { get; set; }
 
+        /// <summary>Set locally during the networked race countdown to suppress parkour input.</summary>
+        public bool RaceInputLocked { get; set; }
+
         public void SetParkourUI(ParkourUI ui)
         {
             parkourUI = ui;
@@ -34,6 +37,12 @@ namespace FS_ParkourSystem
 
         private void Update()
         {
+            if (RaceInputLocked)
+            {
+                JumpFromHang = false;
+                return;
+            }
+
             if (Time.deltaTime == 0) return;
 
             //HandleJump();
