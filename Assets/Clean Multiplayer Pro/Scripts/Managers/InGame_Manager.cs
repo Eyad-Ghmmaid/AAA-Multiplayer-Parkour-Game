@@ -39,6 +39,7 @@ namespace AvocadoShark
         private const int RaceCountdown = 1;
         private const int RaceRunning = 2;
         private const int RaceFinished = 3;
+        private const int RaceRematchWaiting = 4;
         private const float RaceCountdownSeconds = 3f;
 
         [Networked] private int RacePhase { get; set; }
@@ -47,6 +48,7 @@ namespace AvocadoShark
         [Networked] private double RaceStartTime { get; set; }
         [Networked, Capacity(10)] private NetworkDictionary<PlayerRef, byte> ReadyPlayers => default;
         [Networked, Capacity(10)] private NetworkDictionary<PlayerRef, byte> FinishedPlayers => default;
+        [Networked, Capacity(10)] private NetworkDictionary<PlayerRef, float> FinishTimes => default;
         [Networked, Capacity(10)] private NetworkDictionary<PlayerRef, int> CheckpointProgress => default;
 
         private int _observedRoundId = -1;
@@ -56,15 +58,57 @@ namespace AvocadoShark
         private double _localTeleportInputLockUntil;
 
         public bool CanLocalPlayerToggleReady => Object != null && Runner != null && !Runner.IsShutdown &&
-            (RacePhase == RaceWaiting || RacePhase == RaceFinished);
+            (RacePhase == RaceWaiting || RacePhase == RaceFinished || RacePhase == RaceRematchWaiting);
         public bool IsLocalPlayerReady => Object != null && Runner != null && ReadyPlayers.ContainsKey(Runner.LocalPlayer);
         public int ReadyPlayerCount => Object != null ? ReadyPlayers.Count : 0;
         public int ConnectedPlayerCount => Object != null && Runner != null ? GetActivePlayerCount() : 0;
-        public string ReadyButtonLabel => Object == null
-            ? "Bereit"
-            : RacePhase == RaceFinished
-                ? "Für nächste Runde bereit"
-                : IsLocalPlayerReady ? "Bereit ✓ — zurückziehen" : "Bereit";
+        public string ReadyButtonLabel
+        {
+            get
+            {
+                if (Object == null)
+                    return "Bereit";
+                var isRematch = RacePhase == RaceFinished || RacePhase == RaceRematchWaiting;
+                if (IsLocalPlayerReady)
+                    return "Bereit ✓ — zurückziehen";
+                return isRematch ? "Für nächste Runde bereit" : "Bereit";
+            }
+        }
+
+        public bool ShowRaceResults => Object != null &&
+            (RacePhase == RaceFinished || RacePhase == RaceRematchWaiting);
+
+        public string RaceResultsLabel
+        {
+            get
+            {
+                if (Object == null || Runner == null)
+                    return string.Empty;
+
+                var results = new List<KeyValuePair<PlayerRef, float>>();
+                foreach (var result in FinishTimes)
+                    if (IsPlayerActive(result.Key))
+                        results.Add(result);
+
+                results.Sort((left, right) =>
+                {
+                    var timeOrder = left.Value.CompareTo(right.Value);
+                    return timeOrder != 0 ? timeOrder : left.Key.PlayerId.CompareTo(right.Key.PlayerId);
+                });
+
+                var lines = new List<string> { "Ergebnisse" };
+                for (var i = 0; i < results.Count; i++)
+                {
+                    var result = results[i];
+                    lines.Add($"{i + 1}. {GetRacePlayerName(result.Key)} — {FormatRaceTime(result.Value)}");
+                }
+
+                lines.Add(ReadyPlayerCount >= ConnectedPlayerCount && ConnectedPlayerCount > 0
+                    ? "Rematch startet …"
+                    : $"Für Rematch bereit: {ReadyPlayerCount}/{ConnectedPlayerCount}");
+                return string.Join("\n", lines);
+            }
+        }
 
         public string RaceStatusLabel
         {
@@ -88,10 +132,10 @@ namespace AvocadoShark
                     return elapsed < 0.5d ? $"GO!  {FormatRaceTime(elapsed)}" : FormatRaceTime(elapsed);
                 }
 
-                if (RacePhase == RaceFinished)
+                if (RacePhase == RaceFinished || RacePhase == RaceRematchWaiting)
                     return _localRaceFinished
-                        ? $"Runde beendet — deine Zeit: {FormatRaceTime(_localFinishTime)}"
-                        : "Runde beendet — bereit für die nächste?";
+                        ? $"Runde beendet — deine Zeit: {FormatRaceTime(_localFinishTime)} · Rematch bereit: {ReadyPlayerCount}/{ConnectedPlayerCount}"
+                        : $"Runde beendet — Rematch bereit: {ReadyPlayerCount}/{ConnectedPlayerCount}";
 
                 return $"Bereit: {ReadyPlayerCount}/{ConnectedPlayerCount}";
             }
@@ -179,7 +223,7 @@ namespace AvocadoShark
         [Rpc(RpcSources.All, RpcTargets.StateAuthority)]
         private void ToggleReadyRpc(RpcInfo info = default)
         {
-            if (RacePhase != RaceWaiting && RacePhase != RaceFinished)
+            if (RacePhase != RaceWaiting && RacePhase != RaceFinished && RacePhase != RaceRematchWaiting)
                 return;
 
             var source = info.Source;
@@ -187,11 +231,7 @@ namespace AvocadoShark
                 return;
 
             if (RacePhase == RaceFinished)
-            {
-                ReadyPlayers.Clear();
-                FinishedPlayers.Clear();
-                RacePhase = RaceWaiting;
-            }
+                RacePhase = RaceRematchWaiting;
 
             if (ReadyPlayers.ContainsKey(source))
                 ReadyPlayers.Remove(source);
@@ -231,6 +271,7 @@ namespace AvocadoShark
             RaceRoundId++;
             ReadyPlayers.Clear();
             FinishedPlayers.Clear();
+            FinishTimes.Clear();
             CheckpointProgress.Clear();
             foreach (var player in players)
                 CheckpointProgress.Add(player, 0);
@@ -397,17 +438,21 @@ namespace AvocadoShark
 
             _localFinishTime = Math.Max(0d, Runner.SimulationTime - RaceStartTime);
             _localRaceFinished = true;
-            ReportPlayerFinishedRpc();
+            ReportPlayerFinishedRpc((float)_localFinishTime);
         }
 
         [Rpc(RpcSources.All, RpcTargets.StateAuthority)]
-        private void ReportPlayerFinishedRpc(RpcInfo info = default)
+        private void ReportPlayerFinishedRpc(float finishTime, RpcInfo info = default)
         {
-            if (RacePhase != RaceRunning || info.Source == PlayerRef.None || !IsPlayerActive(info.Source))
+            if (RacePhase != RaceRunning || info.Source == PlayerRef.None || !IsPlayerActive(info.Source) ||
+                float.IsNaN(finishTime) || float.IsInfinity(finishTime) || finishTime < 0f)
                 return;
 
             if (!FinishedPlayers.ContainsKey(info.Source))
+            {
                 FinishedPlayers.Add(info.Source, 1);
+                FinishTimes.Set(info.Source, finishTime);
+            }
 
             if (FinishedPlayers.Count >= GetActivePlayerCount())
                 RacePhase = RaceFinished;
@@ -449,6 +494,13 @@ namespace AvocadoShark
             foreach (var player in staleFinished)
                 FinishedPlayers.Remove(player);
 
+            var staleTimes = new List<PlayerRef>();
+            foreach (var time in FinishTimes)
+                if (!activePlayers.Contains(time.Key))
+                    staleTimes.Add(time.Key);
+            foreach (var player in staleTimes)
+                FinishTimes.Remove(player);
+
             var staleCheckpoints = new List<PlayerRef>();
             foreach (var checkpoint in CheckpointProgress)
                 if (!activePlayers.Contains(checkpoint.Key))
@@ -461,6 +513,16 @@ namespace AvocadoShark
         {
             var time = TimeSpan.FromSeconds(Math.Max(0d, seconds));
             return $"{(int)time.TotalMinutes:00}:{time.Seconds:00}.{time.Milliseconds / 10:00}";
+        }
+
+        private string GetRacePlayerName(PlayerRef player)
+        {
+            var playerObject = Runner.GetPlayerObject(player);
+            var stats = playerObject != null ? playerObject.GetComponentInChildren<PlayerStats>(true) : null;
+            if (stats != null && !string.IsNullOrWhiteSpace(stats.PlayerName.ToString()))
+                return RichTextSafety.Escape(stats.PlayerName.ToString());
+
+            return $"Spieler {player.PlayerId + 1}";
         }
         public async void LeaveRoom()
         {
