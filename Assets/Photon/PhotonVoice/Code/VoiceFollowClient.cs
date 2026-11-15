@@ -112,7 +112,23 @@ namespace Photon.Voice
                         break;
 
                     case OperationCode.JoinGame:
-                        this.Logger.Log(LogLevel.Error, "Failed to join room. RoomName: '{2}' Region: {3} Error: {0}. Message: {1}.", operationResponse.ReturnCode, operationResponse.DebugMessage, GetVoiceRoomName(), this.Client.CurrentRegion);
+                        if (operationResponse.ReturnCode == ErrorCode.GameDoesNotExist)
+                        {
+                            // Fusion can keep an active Host/Client match running while
+                            // it recovers from a Photon Cloud room loss. Voice may briefly
+                            // try to follow the old "<session>_voice" room during that
+                            // transition. This is recoverable and must not be logged as an
+                            // error: Development Builds open a modal console for LogError,
+                            // stealing input and making both game windows appear frozen.
+                            this.Logger.Log(LogLevel.Warning,
+                                "Voice room no longer exists; voice is disabled for this connection. RoomName: '{2}' Region: {3} Error: {0}. Message: {1}.",
+                                operationResponse.ReturnCode, operationResponse.DebugMessage,
+                                GetVoiceRoomName(), this.Client.CurrentRegion);
+                        }
+                        else
+                        {
+                            this.Logger.Log(LogLevel.Error, "Failed to join room. RoomName: '{2}' Region: {3} Error: {0}. Message: {1}.", operationResponse.ReturnCode, operationResponse.DebugMessage, GetVoiceRoomName(), this.Client.CurrentRegion);
+                        }
 
                         // TODO: replace the following with a cooldown time. check error code if this is a temporary issue and if so, the client can try again
                         this.errAuthOrJoin = true;    // prevents re-connecting without game logic doing something

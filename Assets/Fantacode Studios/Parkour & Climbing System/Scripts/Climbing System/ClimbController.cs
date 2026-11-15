@@ -47,6 +47,7 @@ namespace FS_ParkourSystem
 
         ClimbCore climbCore;
         ParkourCore parkourCore;
+        FSNetworkParkourAnimationSync networkParkourAnimationSync;
 
         // Combo state for DoPredictiveClimb (reset each call via ResetPredictiveClimbState)
         bool doCombo;
@@ -65,6 +66,7 @@ namespace FS_ParkourSystem
             envScanner = GetComponent<EnvironmentScanner>();
             climbCore = GetComponent<ClimbCore>();
             parkourCore = GetComponent<ParkourCore>();
+            networkParkourAnimationSync = GetComponentInParent<FSNetworkParkourAnimationSync>();
 
             if (climbCore != null)
             {
@@ -76,6 +78,12 @@ namespace FS_ParkourSystem
         public void OnAnimatorIK(int layerIndex)
         {
             // Unity can invoke Animator IK before Start on a freshly spawned player.
+            if (networkParkourAnimationSync == null)
+                networkParkourAnimationSync = GetComponentInParent<FSNetworkParkourAnimationSync>();
+
+            if (networkParkourAnimationSync != null && networkParkourAnimationSync.ApplyProxyHangIK(animator))
+                return;
+
             if (climbCore != null)
                 climbCore.OnAnimatorIK(layerIndex);
         }

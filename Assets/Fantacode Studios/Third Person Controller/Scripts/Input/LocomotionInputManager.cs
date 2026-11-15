@@ -3,6 +3,9 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+#if ENABLE_INPUT_SYSTEM
+using UnityEngine.InputSystem;
+#endif
 
 namespace FS_LocomotionSystem
 {
@@ -124,6 +127,25 @@ namespace FS_LocomotionSystem
             Vector2 dir;
 #if inputsystem
             dir = input.Locomotion.MoveInput.ReadValue<Vector2>();
+#if ENABLE_INPUT_SYSTEM
+            // Keep keyboard/gamepad locomotion working in builds where the generated
+            // FS action map reports zero while camera actions are active.
+            var keyboard = Keyboard.current;
+            if (keyboard != null)
+            {
+                var keyboardMove = Vector2.zero;
+                if (keyboard.aKey.isPressed) keyboardMove.x -= 1f;
+                if (keyboard.dKey.isPressed) keyboardMove.x += 1f;
+                if (keyboard.sKey.isPressed) keyboardMove.y -= 1f;
+                if (keyboard.wKey.isPressed) keyboardMove.y += 1f;
+                if (keyboardMove.sqrMagnitude > dir.sqrMagnitude)
+                    dir = keyboardMove;
+            }
+
+            var gamepad = Gamepad.current;
+            if (gamepad != null && gamepad.leftStick.ReadValue().sqrMagnitude > dir.sqrMagnitude)
+                dir = gamepad.leftStick.ReadValue();
+#endif
 #else
             float h = Input.GetAxisRaw("Horizontal");
             float v = Input.GetAxisRaw("Vertical");

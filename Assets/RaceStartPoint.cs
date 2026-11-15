@@ -9,6 +9,10 @@ public sealed class RaceStartPoint : MonoBehaviour
     [SerializeField, Min(0.5f)] private float playerSpacing = 1.5f;
     [SerializeField, Min(0.5f)] private float rowSpacing = 2f;
     [SerializeField, Min(1)] private int playersPerRow = 5;
+    [Tooltip("World-up offset from this marker to the actual floor surface. Use 0 when the marker is placed directly on the floor.")]
+    [SerializeField] private float floorHeightOffset;
+
+    public Vector3 FloorPosition => transform.position + Vector3.up * floorHeightOffset;
 
     public Vector3[] CalculatePlayerSlots(int playerCount)
     {
@@ -24,7 +28,7 @@ public sealed class RaceStartPoint : MonoBehaviour
             var rowIndex = row == 0 ? i : i - firstRowCount;
             var rowCount = row == 0 ? firstRowCount : playerCount - firstRowCount;
             var sideOffset = (rowIndex - (rowCount - 1) * 0.5f) * playerSpacing;
-            positions[i] = transform.position
+            positions[i] = FloorPosition
                 + transform.right * sideOffset
                 - transform.forward * (row * rowSpacing);
         }

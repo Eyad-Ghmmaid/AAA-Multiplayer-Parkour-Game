@@ -1488,7 +1488,6 @@ GameObject:
   - component: {fileID: 1375471749704258411}
   - component: {fileID: 5465965216791062534}
   - component: {fileID: 4290284911325300020}
-  - component: {fileID: 5735541871245673948}
   - component: {fileID: 2886819804665020307}
   - component: {fileID: 7384810136300765298}
   - component: {fileID: 2269997654753091448}
@@ -2246,47 +2245,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 582966a1c73f26d4291b2f883a6c1582, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::FS_InteractionSystem.InteractionExecutor
---- !u!114 &5735541871245673948
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1867889191492008202}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 158639473, guid: e725a070cec140c4caffb81624c8c787, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Fusion.Runtime.dll::Fusion.NetworkTransform
-  _stateAuthorityChangeErrorCorrectionDelta: 0
-  SyncScale: 0
-  SyncParent: 0
-  _autoAOIOverride: 1
-  ConfigFlags: 1
-  PhysicsSettings:
-    ForecastEnabled: 1
-    DebugPhysics: 0
-    GravityForecast: 2
-    MaxExtrapolationTime: 0.15
-    MinLinearDetectedError: 0.02
-    MinAngularDetectedError: 3
-    DeadzoneVelocityMode: 0
-    MaxLinearError: 0
-    MaxAngularError: 0
-    LowCorrectionProgressThreshold: 0.015
-    HighErrorSimilarityThreshold: 1
-    MaxErrorTotalTime: 0.5
-    MaxRemoteSleepIgnoreTime: 0.5
-    ErrorCorrectionType: 0
-    LinearVelCorrectionMul: 1
-    AngularVelCorrectionMul: 1
-    PositionCorrectionLerp: 0.15
-    RotationCorrectionLerp: 0.15
-    Spring: 75
-    Damper: 2
-    MinImpactfulCollisionAlignment: 0.3
-    ImpactStartCorrectionTime: 0.1
-    ImpactCorrectionTimeComplete: 0.3
 --- !u!54 &2886819804665020307
 Rigidbody:
   m_ObjectHideFlags: 0
@@ -2361,7 +2319,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 52fa576433854051a48e2e6c0ba7874e, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  logDiagnostics: 1
+  logDiagnostics: 0
 --- !u!1 &1953128215061339965
 GameObject:
   m_ObjectHideFlags: 0
@@ -6228,10 +6186,9 @@ MonoBehaviour:
   NetworkedBehaviours:
   - {fileID: 5546480797462526105}
   - {fileID: -2662904827266389967}
-  - {fileID: 5735541871245673948}
   - {fileID: 2269997654753091448}
   - {fileID: 4489207361145281702}
-  ForceRemoteRenderTimeframe: 0
+  ForceRemoteRenderTimeframe: 1
 --- !u!114 &5546480797462526105
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -6287,7 +6244,10 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::FSNetworkAuthoritySetup
   playerController: {fileID: 4564066652557789433}
   inputManager: {fileID: 7489804118320863}
+  parkourInputManager: {fileID: 2662609449334359316}
   localCameraRig: {fileID: 7413941264763873406}
+  playerLocalPosition: {x: -0.07309055, y: -0.39661, z: 0.062330246}
+  playerLocalRotation: {x: 0, y: 0, z: 0, w: 1}
 --- !u!1 &8267237321974323313
 GameObject:
   m_ObjectHideFlags: 0

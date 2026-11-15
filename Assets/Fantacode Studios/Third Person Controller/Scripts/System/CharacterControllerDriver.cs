@@ -11,8 +11,6 @@ namespace FS_LocomotionSystem
         CharacterController controller;
         Vector3 velocity;
         bool blocked;
-
-
         private void Awake()
         {
             controller = GetComponent<CharacterController>();
@@ -36,9 +34,7 @@ namespace FS_LocomotionSystem
             if (ignoreCollision || !controller.enabled)
                 transform.position += deltaPos;
             else
-            {
                 controller.Move(deltaPos);
-            }
         }
 
         public void SetMovementBlocked(bool blocked)

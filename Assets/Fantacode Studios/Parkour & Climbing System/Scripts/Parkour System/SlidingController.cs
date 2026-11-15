@@ -50,6 +50,10 @@ namespace FC_ParkourSystem
         private Transform modelTransform;
         private bool slidingAnimActive;
 
+        public AnimationClip SlidingClip => slidingClip;
+        public AnimGraphClipInfo SlideJumpClipInfo => slideJumpClipInfo;
+        public bool IsSlidingAnimationActive => slidingAnimActive;
+
         float sampleRadius = 2f;
         int sampleCount = 16;
         float sampleHeightOffset = 0.5f;

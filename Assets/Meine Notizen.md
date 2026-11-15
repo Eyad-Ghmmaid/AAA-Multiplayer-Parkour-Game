@@ -112,3 +112,10 @@
 2- Vergib Checkpoint-Indizes entlang der Strecke in Reihenfolge: 1, 2, 3 usw. Der Checkpoint mit dem höchsten Index, den ein Spieler erreicht hat, ist sein Respawn-Ziel.
 3- Für einen genauen Respawn-Punkt kannst du unter dem Checkpoint ein leeres Kindobjekt wie RespawnPoint anlegen. Platziere es auf sicherem Boden und richte es zur Strecke aus; ziehe es dann in das Feld Respawn Point des RaceCheckpoint. Ohne zugewiesenes Kindobjekt wird die Position des Checkpoint-Objekts verwendet.
 4- Erstelle unterhalb der Map einen großen Trigger mit BoxCollider und RaceRespawnTrigger. Dimensioniere ihn so, dass fallende Spieler sicher hineingeraten.
+
+# Ergebnisanzeige und Rematch
+1. Erstelle unter GameCanvas ein Ergebnis-Panel mit einem TextMeshPro-Textfeld.
+2. Füge RaceResultsPanelUI zu GameCanvas hinzu.
+3. Weise dem Skript das Panel und das TMP-Textfeld zu. Lass GameCanvas aktiv; das Skript blendet das Panel je nach Rennstatus ein und aus.
+4. Baue das Spiel und teste mit zwei Clients: Beide Spieler beenden das Rennen, die Zeiten erscheinen sortiert, danach stimmen beide über den Ready-Button für ein Rematch.
+Skript: [InGame_Manager.cs]

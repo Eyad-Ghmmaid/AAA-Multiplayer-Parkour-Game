@@ -75,6 +75,194 @@ namespace FS_Core
             cancelCurrentAction = true;
         }
 
+        /// <summary>
+        /// Writes a network presentation parameter to both Animator facades. The
+        /// visible base pose is produced by AnimatorControllerPlayable, while some
+        /// FS systems still read the parameter from Animator.
+        /// </summary>
+        public void SetNetworkAnimatorFloat(int parameterHash, float value)
+        {
+            if (animator != null)
+                animator.SetFloat(parameterHash, value);
+
+            if (playableAnimator.IsValid())
+                playableAnimator.SetFloat(parameterHash, value);
+        }
+
+        public void SetNetworkAnimatorBool(int parameterHash, bool value)
+        {
+            if (animator != null)
+                animator.SetBool(parameterHash, value);
+
+            if (playableAnimator.IsValid())
+                playableAnimator.SetBool(parameterHash, value);
+        }
+
+        /// <summary>
+        /// Applies an authoritative Animator Controller state to the controller
+        /// playable which actually feeds this graph's final output. Calling only
+        /// Animator.Play/CrossFade leaves the visible playable in its old state on
+        /// an Input Authority client.
+        /// </summary>
+        public bool PlayNetworkAnimatorState(int stateHash, float normalizedTime, float transitionDuration)
+        {
+            if (stateHash == 0)
+                return false;
+
+            normalizedTime = Mathf.Repeat(normalizedTime, 1f);
+            transitionDuration = Mathf.Max(0f, transitionDuration);
+            bool appliedToPlayable = false;
+
+            if (playableAnimator.IsValid())
+            {
+                if (transitionDuration <= Mathf.Epsilon)
+                    playableAnimator.Play(stateHash, 0, normalizedTime);
+                else
+                    playableAnimator.CrossFade(stateHash, transitionDuration, 0, normalizedTime);
+
+                appliedToPlayable = true;
+            }
+
+            // Keep Animator's public state facade aligned for FS scripts which
+            // query GetCurrentAnimatorStateInfo even though the PlayableGraph owns
+            // the final rendered pose.
+            if (animator != null)
+            {
+                if (transitionDuration <= Mathf.Epsilon)
+                    animator.Play(stateHash, 0, normalizedTime);
+                else
+                    animator.CrossFade(stateHash, transitionDuration, 0, normalizedTime);
+            }
+
+            return appliedToPlayable;
+        }
+
+        /// <summary>
+        /// Starts a named Animator Controller state on both Animator facades. FS
+        /// actions store short state names rather than full-path hashes, so using
+        /// the string overload preserves the same lookup semantics as
+        /// ActionExecutor.ExecuteAnimatorAction on the State Authority.
+        /// </summary>
+        public bool PlayNetworkAnimatorState(string stateName, float normalizedTime,
+            float transitionDuration, bool useFixedTransition)
+        {
+            if (string.IsNullOrWhiteSpace(stateName))
+                return false;
+
+            normalizedTime = Mathf.Repeat(normalizedTime, 1f);
+            transitionDuration = Mathf.Max(0f, transitionDuration);
+            bool appliedToPlayable = false;
+
+            if (playableAnimator.IsValid())
+            {
+                if (transitionDuration <= Mathf.Epsilon)
+                    playableAnimator.Play(stateName, 0, normalizedTime);
+                else if (useFixedTransition)
+                    playableAnimator.CrossFadeInFixedTime(stateName, transitionDuration, 0, normalizedTime);
+                else
+                    playableAnimator.CrossFade(stateName, transitionDuration, 0, normalizedTime);
+
+                appliedToPlayable = true;
+            }
+
+            if (animator != null)
+            {
+                if (transitionDuration <= Mathf.Epsilon)
+                    animator.Play(stateName, 0, normalizedTime);
+                else if (useFixedTransition)
+                    animator.CrossFadeInFixedTime(stateName, transitionDuration, 0, normalizedTime);
+                else
+                    animator.CrossFade(stateName, transitionDuration, 0, normalizedTime);
+            }
+
+            return appliedToPlayable;
+        }
+
+        /// <summary>
+        /// Samples an already active network Animator state without starting another
+        /// transition. This keeps an Input Authority presentation on the Host's
+        /// interpolated animation phase while avoiding repeated CrossFade restarts.
+        /// </summary>
+        public bool SampleNetworkAnimatorState(int stateHash, float normalizedTime)
+        {
+            if (stateHash == 0 || !playableAnimator.IsValid()
+                || playableAnimator.IsInTransition(0))
+                return false;
+
+            var playableState = playableAnimator.GetCurrentAnimatorStateInfo(0);
+            if (playableState.fullPathHash != stateHash)
+                return false;
+
+            normalizedTime = Mathf.Repeat(normalizedTime, 1f);
+            playableAnimator.Play(stateHash, 0, normalizedTime);
+
+            // Keep the Animator facade aligned for IK and third-party state queries.
+            if (animator != null && !animator.IsInTransition(0)
+                && animator.GetCurrentAnimatorStateInfo(0).fullPathHash == stateHash)
+            {
+                animator.Play(stateHash, 0, normalizedTime);
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Samples the currently connected action clip at an authoritative network
+        /// time and derives its blend weight from that same time. The Playable is
+        /// paused locally so render-frame variance cannot make a remote Vault/Climb
+        /// clip or its transition run ahead of the networked root movement.
+        /// </summary>
+        public bool SetNetworkPresentationNormalizedTime(float normalizedTime,
+            float transitionIn = 0f, float transitionOut = 0f, bool transitionBack = false)
+        {
+            var mixer = currentClipStateInfo.currentMixer;
+            if (!mixer.IsValid() || mixer.GetInputCount() < 2 || currentClipStateInfo.clipLength <= 0f)
+                return false;
+
+            var clipPlayable = mixer.GetInput(1);
+            if (!clipPlayable.IsValid())
+                return false;
+
+            float clampedNormalizedTime = Mathf.Clamp01(normalizedTime);
+            double clipTime = clampedNormalizedTime * currentClipStateInfo.clipLength;
+            SetPlayableTreeTimeAndSpeed(clipPlayable, clipTime, 0d);
+
+            // UpdateWeights normally blends by the local coroutine timer. A cue
+            // reaches the owning client after network latency, so that timer starts
+            // later than NetworkTransform's rendered pose. Recalculate the weight
+            // from the authoritative clip phase to keep pose and position atomic.
+            float timer = (float)clipTime;
+            float weight = 1f;
+            transitionIn = Mathf.Max(0f, transitionIn);
+            transitionOut = Mathf.Max(0f, transitionOut);
+
+            if (transitionIn > Mathf.Epsilon && timer < transitionIn)
+                weight = Mathf.Clamp01(timer / transitionIn);
+            else if (transitionBack && transitionOut > Mathf.Epsilon
+                && timer > currentClipStateInfo.clipLength - transitionOut)
+                weight = Mathf.Clamp01((currentClipStateInfo.clipLength - timer) / transitionOut);
+
+            mixer.SetInputWeight(0, 1f - weight);
+            mixer.SetInputWeight(1, weight);
+
+            currentClipStateInfo.normalizedTime = clampedNormalizedTime;
+            currentClipStateInfo.timer = (float)clipTime;
+            currentClipStateInfo.deltaTime = 0f;
+            return true;
+        }
+
+        private static void SetPlayableTreeTimeAndSpeed(Playable playable, double time, double speed)
+        {
+            if (!playable.IsValid())
+                return;
+
+            playable.SetSpeed(speed);
+            playable.SetTime(time);
+
+            for (int i = 0; i < playable.GetInputCount(); i++)
+                SetPlayableTreeTimeAndSpeed(playable.GetInput(i), time, speed);
+        }
+
         public int LastRebakeFrame { get; private set; } = -2;
 
         int lastActionAnimationFrame = -2;
@@ -266,7 +454,8 @@ namespace FS_Core
             Action OnComplete = null, bool overridableByAnimator = false, params ActionData[] actions)
         {
             StartCoroutine(CrossfadeAsync(clip, clipInfo, false, transitionBack, mask, isAdditiveLayerAnimation, 
-                transitionIn, transitionOut, animationSpeed, onAnimationUpdate, OnComplete, overridableByAnimator, actions));
+                transitionIn, transitionOut, animationSpeed, onAnimationUpdate, OnComplete,
+                overridableByAnimator, false, actions));
         }
 
         public void PlayLoopingAnimation(AnimationClip clip, AnimGraphClipInfo clipInfo = null, Mask mask = Mask.Null, 
@@ -281,7 +470,8 @@ namespace FS_Core
             bool isLoopingAnimation = false, bool transitionBack = true, Mask mask = Mask.Null, 
             bool isAdditiveLayerAnimation = false, float transitionIn = .2f, float transitionOut = .2f, 
             float animationSpeed = 1, Action<float, float> onAnimationUpdate = null, Action OnComplete = null, 
-            bool overridableByAnimator = false, params ActionData[] actions)
+            bool overridableByAnimator = false, bool ignoreActionReplacement = false,
+            params ActionData[] actions)
         {
             if (clipInfo != null)
             {
@@ -340,7 +530,7 @@ namespace FS_Core
 
             yield return UpdateWeights(clip, clipPlayable, clipMixer, currentActionMixer, clipInfo, isLoopingAnimation,
                 isAdditiveLayerAnimation, transitionBack, isLayerMixer, transitionIn, transitionOut, animationSpeed,
-                onAnimationUpdate, overridableByAnimator, actions);
+                onAnimationUpdate, overridableByAnimator, ignoreActionReplacement, actions);
 
             if (transitionBack)
             {
@@ -380,7 +570,8 @@ namespace FS_Core
 
             yield return CrossfadeAsync(clipInfo.clip, clipInfo, p.isLoopingAnimation, p.transitionBack, p.mask, 
                 p.isAdditiveLayerAnimation, p.transitionIn, p.transitionOut, 
-                p.animationSpeed, p.onAnimationUpdate, p.OnComplete, p.overridableByAnimator);
+                p.animationSpeed, p.onAnimationUpdate, p.OnComplete, p.overridableByAnimator,
+                p.ignoreActionReplacement);
         }
         #endregion
 
@@ -588,7 +779,20 @@ namespace FS_Core
 
         IEnumerator ChangePreviousPlayableWeight(Playable currentMixer, Playable mixer)
         {
-            yield return new WaitUntil(() => !currentMixer.GetInput(0).Equals(mixer));
+            // ResetAnimationGraph destroys every handle in the old graph. A
+            // WaitUntil predicate which dereferences one of those handles on the
+            // following frame throws "The Playable is invalid" forever in a build.
+            // Poll explicitly and leave before touching a disposed graph.
+            while (currentMixer.IsValid() && mixer.IsValid()
+                && currentMixer.GetInputCount() > 0
+                && currentMixer.GetInput(0).Equals(mixer))
+            {
+                yield return null;
+            }
+
+            if (!currentMixer.IsValid() || !mixer.IsValid())
+                yield break;
+
             float transitionTime = .2f;
             yield return new WaitForSeconds(transitionTime);
             if (mixer.IsValid())
@@ -752,7 +956,7 @@ namespace FS_Core
             AnimGraphClipInfo clipInfo = null, bool isLoopingAnimation = false, bool isAdditiveLayerAnimation = false, 
             bool transitionBack = true, bool isLayerMixer = false, float transitionIn = .2f, float transitionOut = .2f, 
             float animationSpeed = 1, Action<float, float> onAnimationUpdate = null, bool overridableByAnimator = false, 
-            params ActionData[] actions)
+            bool ignoreActionReplacement = false, params ActionData[] actions)
         {
             if (clipInfo != null)
                 clip = clipInfo.clip ?? clip; // Assign clip if clipInfo has a valid clip
@@ -902,7 +1106,8 @@ namespace FS_Core
                 // was other animation played on top of this one?
                 // if so, stop playing the current action by reseting weights once the transition of the new actions is complete
                 bool isPlayingAnotherAction = !currentMixer.GetInput(0).Equals(mixer);
-                if (isPlayingAnotherAction && transitionBack && !currentAnimationIsAdditive)
+                if (isPlayingAnotherAction && transitionBack && !currentAnimationIsAdditive
+                    && !ignoreActionReplacement)
                 {
                     var waitTIme = currentClipInfo != null ? currentClipInfo.TranistionInAndOut.x : .2f;
                     yield return new WaitForSeconds(waitTIme);
@@ -1493,12 +1698,17 @@ namespace FS_Core
 
         public void ResetAnimationGraph()
         {
+            // Every AnimGraph coroutine stores Playable handles from the current
+            // graph. Stop them before CreateGraph destroys those handles; otherwise
+            // transition helpers can wake up later and dereference disposed mixers.
+            StopAllCoroutines();
             isLocomotionOverrideActive = false;
-            if (locomotionOverrideTransition != null)
-            {
-                StopCoroutine(locomotionOverrideTransition);
-                locomotionOverrideTransition = null;
-            }
+            locomotionOverrideTransition = null;
+            cancelCurrentAction = false;
+            currentAnimationIsAdditive = false;
+            isLastAnimationNonTransitionBack = false;
+            currentPlayableMixer = Playable.Null;
+            currentClipStateInfo = new CurrentClipStateInfo();
             CreateGraph();
         }
 
@@ -1601,6 +1811,11 @@ namespace FS_Core
         public Action OnComplete = null;
 
         public bool overridableByAnimator = false;
+
+        // A network presentation clip is driven by the State Authority. Local
+        // PlayableGraph changes must not terminate it before the authoritative
+        // action end arrives; ordinary offline FS actions retain the old behavior.
+        [NonSerialized] public bool ignoreActionReplacement = false;
     }
 
     public class ActionData

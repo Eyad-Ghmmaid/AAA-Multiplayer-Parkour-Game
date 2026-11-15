@@ -48,18 +48,31 @@ namespace AvocadoShark
         [Networked] private double RaceStartTime { get; set; }
         [Networked, Capacity(10)] private NetworkDictionary<PlayerRef, byte> ReadyPlayers => default;
         [Networked, Capacity(10)] private NetworkDictionary<PlayerRef, byte> FinishedPlayers => default;
+        [Networked, Capacity(10)] private NetworkDictionary<PlayerRef, byte> RaceParticipants => default;
         [Networked, Capacity(10)] private NetworkDictionary<PlayerRef, float> FinishTimes => default;
         [Networked, Capacity(10)] private NetworkDictionary<PlayerRef, int> CheckpointProgress => default;
 
         private int _observedRoundId = -1;
         private bool _localRaceFinished;
+        private bool _localFinishReportPending;
+        private double _localFinishReportSentAt;
         private bool _localRaceCountdownLock;
-        private double _localFinishTime;
         private double _localTeleportInputLockUntil;
+        private readonly List<PendingHostTeleport> _pendingHostTeleports = new List<PendingHostTeleport>();
+
+        private struct PendingHostTeleport
+        {
+            public PlayerRef Target;
+            public Vector3 FloorPosition;
+            public Quaternion Rotation;
+        }
 
         public bool CanLocalPlayerToggleReady => Object != null && Runner != null && !Runner.IsShutdown &&
             (RacePhase == RaceWaiting || RacePhase == RaceFinished || RacePhase == RaceRematchWaiting);
+        public bool IsHostAuthoritativeSession => Runner != null &&
+            (Runner.GameMode == GameMode.Host || Runner.GameMode == GameMode.Server);
         public bool IsLocalPlayerReady => Object != null && Runner != null && ReadyPlayers.ContainsKey(Runner.LocalPlayer);
+        private bool IsLocalRaceParticipant => Object != null && Runner != null && RaceParticipants.ContainsKey(Runner.LocalPlayer);
         public int ReadyPlayerCount => Object != null ? ReadyPlayers.Count : 0;
         public int ConnectedPlayerCount => Object != null && Runner != null ? GetActivePlayerCount() : 0;
         public string ReadyButtonLabel
@@ -77,6 +90,21 @@ namespace AvocadoShark
 
         public bool ShowRaceResults => Object != null &&
             (RacePhase == RaceFinished || RacePhase == RaceRematchWaiting);
+
+        /// <summary>Host-side movement gate for countdowns, spectators, and finished racers.</summary>
+        public bool CanPlayerMoveOnAuthority(PlayerRef player)
+        {
+            if (Object == null || Runner == null || !IsPlayerActive(player))
+                return false;
+
+            if (RacePhase == RaceCountdown)
+                return false;
+
+            if (RacePhase == RaceRunning)
+                return IsRaceParticipant(player) && !FinishedPlayers.ContainsKey(player);
+
+            return true;
+        }
 
         public string RaceResultsLabel
         {
@@ -119,23 +147,34 @@ namespace AvocadoShark
 
                 if (RacePhase == RaceCountdown)
                 {
+                    if (!IsLocalRaceParticipant)
+                        return "Runde startet — du bist in der nächsten Runde dabei";
+
                     var remaining = RaceCountdownEndTime - Runner.SimulationTime;
                     return remaining <= 0d ? "GO!" : Math.Ceiling(remaining).ToString();
                 }
 
                 if (RacePhase == RaceRunning)
                 {
+                    if (!IsLocalRaceParticipant)
+                        return "Runde läuft — du kannst bei der nächsten Runde mitspielen";
+
                     if (_localRaceFinished)
-                        return $"Im Ziel: {FormatRaceTime(_localFinishTime)} — andere laufen noch";
+                        return FinishTimes.TryGet(Runner.LocalPlayer, out var confirmedTime)
+                            ? $"Im Ziel: {FormatRaceTime(confirmedTime)} — andere laufen noch"
+                            : "Ziel erreicht — Ergebnis wird geprüft";
 
                     var elapsed = Math.Max(0d, Runner.SimulationTime - RaceStartTime);
                     return elapsed < 0.5d ? $"GO!  {FormatRaceTime(elapsed)}" : FormatRaceTime(elapsed);
                 }
 
                 if (RacePhase == RaceFinished || RacePhase == RaceRematchWaiting)
-                    return _localRaceFinished
-                        ? $"Runde beendet — deine Zeit: {FormatRaceTime(_localFinishTime)} · Rematch bereit: {ReadyPlayerCount}/{ConnectedPlayerCount}"
-                        : $"Runde beendet — Rematch bereit: {ReadyPlayerCount}/{ConnectedPlayerCount}";
+                {
+                    var ownTime = _localRaceFinished && FinishTimes.TryGet(Runner.LocalPlayer, out var confirmedTime)
+                        ? $" — deine Zeit: {FormatRaceTime(confirmedTime)}"
+                        : string.Empty;
+                    return $"Runde beendet{ownTime} · Rematch bereit: {ReadyPlayerCount}/{ConnectedPlayerCount}";
+                }
 
                 return $"Bereit: {ReadyPlayerCount}/{ConnectedPlayerCount}";
             }
@@ -165,6 +204,19 @@ namespace AvocadoShark
             if (!HasStateAuthority || Runner == null)
                 return;
 
+            // Apply teleports inside Fusion's simulation tick. A teleport issued
+            // directly from the Ready button's Unity Update can be overwritten by
+            // the next NetworkTransform snapshot with the old position.
+            if (_pendingHostTeleports.Count > 0)
+            {
+                foreach (var pending in _pendingHostTeleports)
+                {
+                    if (Runner.GetPlayerObject(pending.Target) != null)
+                        TeleportPlayerAtAuthority(pending.Target, pending.FloorPosition, pending.Rotation);
+                }
+                _pendingHostTeleports.Clear();
+            }
+
             RemoveDisconnectedPlayers();
 
             if (RacePhase == RaceCountdown && Runner.SimulationTime >= RaceCountdownEndTime)
@@ -172,7 +224,7 @@ namespace AvocadoShark
                 RaceStartTime = RaceCountdownEndTime;
                 RacePhase = RaceRunning;
             }
-            else if (RacePhase == RaceRunning && FinishedPlayers.Count >= GetActivePlayerCount())
+            else if (RacePhase == RaceRunning && FinishedPlayers.Count >= GetActiveRaceParticipantCount())
             {
                 RacePhase = RaceFinished;
             }
@@ -187,13 +239,25 @@ namespace AvocadoShark
             {
                 _observedRoundId = RaceRoundId;
                 _localRaceFinished = false;
-                _localFinishTime = 0d;
+                _localFinishReportPending = false;
+            }
+
+            if (_localFinishReportPending)
+            {
+                if (FinishTimes.ContainsKey(Runner.LocalPlayer))
+                    _localFinishReportPending = false;
+                else if (Runner.SimulationTime - _localFinishReportSentAt >= 0.75d)
+                {
+                    _localFinishReportPending = false;
+                    _localRaceFinished = false;
+                }
             }
 
             if (RacePhase == RaceRunning || RacePhase == RaceFinished)
                 _localRaceCountdownLock = false;
 
-            SetLocalRaceInputLock(RacePhase == RaceCountdown || _localRaceCountdownLock ||
+            var isWaitingAsSpectator = RacePhase == RaceRunning && !IsLocalRaceParticipant;
+            SetLocalRaceInputLock(RacePhase == RaceCountdown || isWaitingAsSpectator || _localRaceCountdownLock ||
                 Runner.SimulationTime < _localTeleportInputLockUntil);
         }
 
@@ -217,16 +281,29 @@ namespace AvocadoShark
         {
             if (Object == null || Runner == null || Runner.IsShutdown || !CanLocalPlayerToggleReady)
                 return;
+
+            // A Host already owns this networked race object. Apply its own ready
+            // action directly so it does not depend on RpcInfo.Source for a local RPC.
+            if (HasStateAuthority)
+            {
+                ToggleReadyForPlayer(Runner.LocalPlayer);
+                return;
+            }
+
             ToggleReadyRpc();
         }
 
         [Rpc(RpcSources.All, RpcTargets.StateAuthority)]
         private void ToggleReadyRpc(RpcInfo info = default)
         {
+            ToggleReadyForPlayer(info.Source);
+        }
+
+        private void ToggleReadyForPlayer(PlayerRef source)
+        {
             if (RacePhase != RaceWaiting && RacePhase != RaceFinished && RacePhase != RaceRematchWaiting)
                 return;
 
-            var source = info.Source;
             if (source == PlayerRef.None || !IsPlayerActive(source))
                 return;
 
@@ -271,20 +348,43 @@ namespace AvocadoShark
             RaceRoundId++;
             ReadyPlayers.Clear();
             FinishedPlayers.Clear();
+            RaceParticipants.Clear();
             FinishTimes.Clear();
             CheckpointProgress.Clear();
             foreach (var player in players)
+            {
+                RaceParticipants.Add(player, 1);
                 CheckpointProgress.Add(player, 0);
+            }
             RaceCountdownEndTime = Runner.SimulationTime + RaceCountdownSeconds;
             RaceStartTime = 0d;
             RacePhase = RaceCountdown;
+
+            Debug.Log($"[Race Start] round={RaceRoundId} players={players.Count} marker={startPoint.transform.position} floor={startPoint.FloorPosition} slots={string.Join("; ", slots)}");
 
             for (var i = 0; i < players.Count; i++)
                 TeleportPlayerRpc(players[i], slots[i], startPoint.transform.rotation);
         }
 
-        [Rpc(RpcSources.StateAuthority, RpcTargets.All)]
         private void TeleportPlayerRpc(PlayerRef target, Vector3 floorPosition, Quaternion rotation)
+        {
+            if (IsHostAuthoritativeSession)
+            {
+                if (HasStateAuthority)
+                    _pendingHostTeleports.Add(new PendingHostTeleport
+                    {
+                        Target = target,
+                        FloorPosition = floorPosition,
+                        Rotation = rotation
+                    });
+                return;
+            }
+
+            RPC_TeleportPlayer(target, floorPosition, rotation);
+        }
+
+        [Rpc(RpcSources.StateAuthority, RpcTargets.All)]
+        private void RPC_TeleportPlayer(PlayerRef target, Vector3 floorPosition, Quaternion rotation)
         {
             if (Runner.LocalPlayer != target)
                 return;
@@ -293,27 +393,41 @@ namespace AvocadoShark
             if (networkPlayer == null || !networkPlayer.HasStateAuthority)
                 return;
 
+            TeleportPlayerAtAuthority(target, floorPosition, rotation);
+        }
+
+        private void TeleportPlayerAtAuthority(PlayerRef target, Vector3 floorPosition, Quaternion rotation)
+        {
+            var networkPlayer = Runner.GetPlayerObject(target);
+            if (networkPlayer == null || !networkPlayer.HasStateAuthority)
+                return;
+
             var rootNetworkTransform = networkPlayer.GetComponent<NetworkTransform>();
             var characterController = networkPlayer.GetComponentInChildren<CharacterController>(true);
             var playerTransform = characterController != null ? characterController.transform : null;
-            var playerNetworkTransform = playerTransform != null ? playerTransform.GetComponent<NetworkTransform>() : null;
 
-            if (rootNetworkTransform == null || playerNetworkTransform == null || characterController == null)
+            if (rootNetworkTransform == null || characterController == null)
             {
-                Debug.LogError("Cannot line up the player: the FS Network Player needs root and Player NetworkTransforms plus a CharacterController.", networkPlayer);
+                Debug.LogError("Cannot line up the player: the FS Network Player needs a root NetworkTransform and a CharacterController.", networkPlayer);
                 return;
             }
 
-            var locomotionInput = networkPlayer.GetComponentInChildren<LocomotionInputManager>(true);
-            if (locomotionInput != null)
-                locomotionInput.RaceInputLocked = true;
+            // The Host directly teleports remote players too. A local script lock
+            // set on the Host's remote proxy never gets cleared by that player's
+            // client, so use the networked race phase for remote countdown gating.
+            if (target == Runner.LocalPlayer)
+            {
+                var locomotionInput = networkPlayer.GetComponentInChildren<LocomotionInputManager>(true);
+                if (locomotionInput != null)
+                    locomotionInput.RaceInputLocked = true;
 
-            var parkourInput = networkPlayer.GetComponentInChildren<ParkourInputManager>(true);
-            if (parkourInput != null)
-                parkourInput.RaceInputLocked = true;
+                var parkourInput = networkPlayer.GetComponentInChildren<ParkourInputManager>(true);
+                if (parkourInput != null)
+                    parkourInput.RaceInputLocked = true;
 
-            _localRaceCountdownLock = true;
-            _localTeleportInputLockUntil = Runner.SimulationTime + 0.2d;
+                _localRaceCountdownLock = true;
+                _localTeleportInputLockUntil = Runner.SimulationTime + 0.2d;
+            }
 
             var locomotionCore = networkPlayer.GetComponentInChildren<LocomotionCore>(true);
             if (locomotionCore != null)
@@ -328,17 +442,32 @@ namespace AvocadoShark
             var capsuleBottomLocal = rootTransform.InverseTransformPoint(capsuleBottom);
             var rootPosition = floorPosition - rotation * capsuleBottomLocal + rotation * Vector3.up * characterController.skinWidth;
 
-            var wasCharacterControllerEnabled = characterController.enabled;
-            characterController.enabled = false;
-            rootNetworkTransform.Teleport(rootPosition, rotation);
-            playerNetworkTransform.Teleport(playerTransform.position, playerTransform.rotation);
-            characterController.enabled = wasCharacterControllerEnabled;
+            var authoritySetup = networkPlayer.GetComponent<FSNetworkAuthoritySetup>();
+            if (authoritySetup != null)
+            {
+                authoritySetup.ApplyAuthoritativeTeleport(rootPosition, rotation);
+            }
+            else
+            {
+                var wasCharacterControllerEnabled = characterController.enabled;
+                characterController.enabled = false;
+                rootNetworkTransform.Teleport(rootPosition, rotation);
+                Physics.SyncTransforms();
+                characterController.enabled = wasCharacterControllerEnabled;
+            }
+
+            var locomotionCoreAfterTeleport = networkPlayer.GetComponentInChildren<LocomotionCore>(true);
+            if (locomotionCoreAfterTeleport != null)
+                locomotionCoreAfterTeleport.GroundCheck();
+
+            Debug.Log($"[Race Teleport] target={target} object={networkPlayer.Id} stateAuthority={networkPlayer.HasStateAuthority} floor={floorPosition} root={networkPlayer.transform.position} player={playerTransform.position} capsuleBottomY={characterController.bounds.min.y}", networkPlayer);
         }
 
         /// <summary>Called by a locally owned player after entering a map checkpoint trigger.</summary>
         public void ReportCheckpoint(int checkpointIndex)
         {
-            if (Object == null || Runner == null || Runner.IsShutdown || RacePhase != RaceRunning || checkpointIndex < 1)
+            if (Object == null || Runner == null || Runner.IsShutdown || RacePhase != RaceRunning ||
+                !IsLocalRaceParticipant || checkpointIndex < 1)
                 return;
 
             ReportCheckpointRpc(checkpointIndex);
@@ -347,31 +476,60 @@ namespace AvocadoShark
         [Rpc(RpcSources.All, RpcTargets.StateAuthority)]
         private void ReportCheckpointRpc(int checkpointIndex, RpcInfo info = default)
         {
-            if (RacePhase != RaceRunning || info.Source == PlayerRef.None || !IsPlayerActive(info.Source))
+            RecordCheckpoint(info.Source, checkpointIndex);
+        }
+
+        /// <summary>Records a checkpoint hit observed by the Host's authoritative physics scene.</summary>
+        public void ReportAuthoritativeCheckpoint(NetworkObject playerObject, int checkpointIndex)
+        {
+            if (!IsHostAuthoritativeSession || !HasStateAuthority || playerObject == null || !playerObject.HasStateAuthority)
                 return;
 
-            var checkpointExists = false;
+            RecordCheckpoint(playerObject.InputAuthority, checkpointIndex);
+        }
+
+        private void RecordCheckpoint(PlayerRef player, int checkpointIndex)
+        {
+            if (RacePhase != RaceRunning || player == PlayerRef.None || !IsRaceParticipant(player))
+                return;
+
+            var previousIndex = CheckpointProgress.TryGet(player, out var savedIndex) ? savedIndex : 0;
+            if (checkpointIndex != previousIndex + 1)
+                return;
+
+            RaceCheckpoint reachedCheckpoint = null;
             foreach (var checkpoint in FindObjectsByType<RaceCheckpoint>(FindObjectsSortMode.None))
             {
                 if (checkpoint.CheckpointIndex == checkpointIndex)
                 {
-                    checkpointExists = true;
+                    reachedCheckpoint = checkpoint;
                     break;
                 }
             }
 
-            if (!checkpointExists)
+            var playerObject = Runner.GetPlayerObject(player);
+            if (reachedCheckpoint == null || playerObject == null)
                 return;
 
-            var previousIndex = CheckpointProgress.TryGet(info.Source, out var savedIndex) ? savedIndex : 0;
-            if (checkpointIndex > previousIndex)
-                CheckpointProgress.Set(info.Source, checkpointIndex);
+            var characterController = playerObject.GetComponentInChildren<CharacterController>(true);
+            var position = characterController != null ? characterController.bounds.center : playerObject.transform.position;
+            var checkpointTolerance = characterController != null
+                ? characterController.radius * Mathf.Max(characterController.transform.lossyScale.x, characterController.transform.lossyScale.z) + 0.1f
+                : 0.25f;
+            if (!reachedCheckpoint.ContainsPosition(position, checkpointTolerance))
+            {
+                Debug.LogWarning($"Rejected checkpoint {checkpointIndex} report from {player}: authoritative player position was outside the checkpoint trigger.", this);
+                return;
+            }
+
+            CheckpointProgress.Set(player, checkpointIndex);
         }
 
         /// <summary>Requests a respawn at the player's latest checkpoint, or at the race start.</summary>
         public void RequestLocalRespawn()
         {
-            if (Object == null || Runner == null || Runner.IsShutdown || RacePhase != RaceRunning)
+            if (Object == null || Runner == null || Runner.IsShutdown || RacePhase != RaceRunning ||
+                !IsLocalRaceParticipant)
                 return;
 
             RequestLocalRespawnRpc();
@@ -380,7 +538,7 @@ namespace AvocadoShark
         [Rpc(RpcSources.All, RpcTargets.StateAuthority)]
         private void RequestLocalRespawnRpc(RpcInfo info = default)
         {
-            if (RacePhase != RaceRunning || info.Source == PlayerRef.None || !IsPlayerActive(info.Source))
+            if (RacePhase != RaceRunning || info.Source == PlayerRef.None || !IsRaceParticipant(info.Source))
                 return;
 
             var savedIndex = CheckpointProgress.TryGet(info.Source, out var value) ? value : 0;
@@ -407,7 +565,7 @@ namespace AvocadoShark
                 }
                 else if (startPoint != null)
                 {
-                    floorPosition = startPoint.transform.position;
+                    floorPosition = startPoint.FloorPosition;
                     rotation = startPoint.transform.rotation;
                 }
                 else
@@ -418,7 +576,7 @@ namespace AvocadoShark
             }
             else if (startPoint != null)
             {
-                floorPosition = startPoint.transform.position;
+                floorPosition = startPoint.FloorPosition;
                 rotation = startPoint.transform.rotation;
             }
             else
@@ -433,28 +591,71 @@ namespace AvocadoShark
         /// <summary>Stops this client's timer when its owner enters the map's finish trigger.</summary>
         public void FinishLocalRace()
         {
-            if (RacePhase != RaceRunning || _localRaceFinished || Runner == null)
+            if (RacePhase != RaceRunning || !IsLocalRaceParticipant || Runner == null ||
+                FinishTimes.ContainsKey(Runner.LocalPlayer))
                 return;
 
-            _localFinishTime = Math.Max(0d, Runner.SimulationTime - RaceStartTime);
+            if (_localFinishReportPending && Runner.SimulationTime - _localFinishReportSentAt < 0.75d)
+                return;
+
             _localRaceFinished = true;
-            ReportPlayerFinishedRpc((float)_localFinishTime);
+            _localFinishReportPending = true;
+            _localFinishReportSentAt = Runner.SimulationTime;
+            ReportPlayerFinishedRpc();
         }
 
         [Rpc(RpcSources.All, RpcTargets.StateAuthority)]
-        private void ReportPlayerFinishedRpc(float finishTime, RpcInfo info = default)
+        private void ReportPlayerFinishedRpc(RpcInfo info = default)
         {
-            if (RacePhase != RaceRunning || info.Source == PlayerRef.None || !IsPlayerActive(info.Source) ||
-                float.IsNaN(finishTime) || float.IsInfinity(finishTime) || finishTime < 0f)
+            TryAcceptFinish(info.Source);
+        }
+
+        /// <summary>Accepts a finish observed by the Host's authoritative physics scene.</summary>
+        public void ReportAuthoritativeFinish(NetworkObject playerObject)
+        {
+            if (!IsHostAuthoritativeSession || !HasStateAuthority || playerObject == null || !playerObject.HasStateAuthority)
                 return;
 
-            if (!FinishedPlayers.ContainsKey(info.Source))
+            TryAcceptFinish(playerObject.InputAuthority);
+        }
+
+        private void TryAcceptFinish(PlayerRef player)
+        {
+            if (RacePhase != RaceRunning || player == PlayerRef.None || !IsRaceParticipant(player) ||
+                FinishedPlayers.ContainsKey(player))
+                return;
+
+            var playerObject = Runner.GetPlayerObject(player);
+            if (playerObject == null)
+                return;
+
+            var characterController = playerObject.GetComponentInChildren<CharacterController>(true);
+            var finishPosition = characterController != null ? characterController.bounds.center : playerObject.transform.position;
+            var finishTriggers = FindObjectsByType<RaceFinishTrigger>(FindObjectsSortMode.None);
+            var reachedFinish = false;
+            foreach (var finishTrigger in finishTriggers)
             {
-                FinishedPlayers.Add(info.Source, 1);
-                FinishTimes.Set(info.Source, finishTime);
+                var finishTolerance = characterController != null
+                    ? characterController.radius * Mathf.Max(characterController.transform.lossyScale.x, characterController.transform.lossyScale.z) + 0.1f
+                    : 0.25f;
+                if (finishTrigger != null && finishTrigger.ContainsPosition(finishPosition, finishTolerance))
+                {
+                    reachedFinish = true;
+                    break;
+                }
             }
 
-            if (FinishedPlayers.Count >= GetActivePlayerCount())
+            if (!reachedFinish)
+            {
+                Debug.LogWarning($"Rejected finish report from {player}: authoritative player position was outside every finish trigger.", this);
+                return;
+            }
+
+            var finishTime = (float)Math.Max(0d, Runner.SimulationTime - RaceStartTime);
+            FinishedPlayers.Add(player, 1);
+            FinishTimes.Set(player, finishTime);
+
+            if (FinishedPlayers.Count >= GetActiveRaceParticipantCount())
                 RacePhase = RaceFinished;
         }
 
@@ -472,6 +673,17 @@ namespace AvocadoShark
                 if (activePlayer == player)
                     return true;
             return false;
+        }
+
+        private bool IsRaceParticipant(PlayerRef player) => RaceParticipants.ContainsKey(player) && IsPlayerActive(player);
+
+        private int GetActiveRaceParticipantCount()
+        {
+            var count = 0;
+            foreach (var participant in RaceParticipants)
+                if (IsPlayerActive(participant.Key))
+                    count++;
+            return count;
         }
 
         private void RemoveDisconnectedPlayers()
@@ -493,6 +705,13 @@ namespace AvocadoShark
                     staleFinished.Add(finished.Key);
             foreach (var player in staleFinished)
                 FinishedPlayers.Remove(player);
+
+            var staleParticipants = new List<PlayerRef>();
+            foreach (var participant in RaceParticipants)
+                if (!activePlayers.Contains(participant.Key))
+                    staleParticipants.Add(participant.Key);
+            foreach (var player in staleParticipants)
+                RaceParticipants.Remove(player);
 
             var staleTimes = new List<PlayerRef>();
             foreach (var time in FinishTimes)

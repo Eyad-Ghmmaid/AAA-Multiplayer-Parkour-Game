@@ -18,6 +18,9 @@ namespace FS_ParkourSystem
         /// <summary>Set locally during the networked race countdown to suppress parkour input.</summary>
         public bool RaceInputLocked { get; set; }
 
+        /// <summary>When true, the network authority supplies input instead of polling local devices.</summary>
+        public bool useExternalInput { get; set; }
+
         public void SetParkourUI(ParkourUI ui)
         {
             parkourUI = ui;
@@ -37,6 +40,9 @@ namespace FS_ParkourSystem
 
         private void Update()
         {
+            if (useExternalInput)
+                return;
+
             if (RaceInputLocked)
             {
                 JumpFromHang = false;

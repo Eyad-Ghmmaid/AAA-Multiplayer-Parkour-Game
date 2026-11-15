@@ -13,6 +13,12 @@ using Photon.Voice.Unity;
 using StarterAssets;
 using Fusion.Photon.Realtime;
 using UnityEngine.Serialization;
+#if ENABLE_INPUT_SYSTEM
+using UnityEngine.InputSystem;
+#endif
+using FS_Core;
+using FS_LocomotionSystem;
+using FS_ParkourSystem;
 
 namespace AvocadoShark
 {
@@ -64,6 +70,10 @@ namespace AvocadoShark
         private FusionVoiceClient _fvc;
         private Recorder _recorder;
         private VoiceManager _voiceManager;
+        [SerializeField] private bool logInputDiagnostics;
+        private int _lastInputDiagnosticFrame = -1000;
+        private FSPlayerNetworkInput _lastInputSample;
+        private bool _cloudConnectionLostCallbackRegistered;
 
         [Header("Loading Screen")] public LoadingScreen loadingScreenScript;
 
@@ -348,8 +358,57 @@ namespace AvocadoShark
             _fvc = Runner.GetComponent<FusionVoiceClient>();
             _recorder = Runner.GetComponentInChildren<Recorder>();
             _voiceManager = Runner.GetComponentInChildren<VoiceManager>();
+            // If the old Photon room has already disappeared, QuickRejoin alone can
+            // only return GameNotFound. Let the Host create Fusion's invisible backup
+            // room so directly connected players keep the running match and the room
+            // can become joinable again after the transfer.
+            NetworkRunner.CloudConnectionLostCurrentMode =
+                NetworkRunner.CloudConnectionLostMode.MoveSessionToNewRoom;
+            if (!_cloudConnectionLostCallbackRegistered)
+            {
+                NetworkRunner.CloudConnectionLost += OnCloudConnectionLost;
+                _cloudConnectionLostCallbackRegistered = true;
+            }
+
+            // Host/Client gameplay input is submitted through OnInput. Without this
+            // flag Fusion starts the session but never collects that input, leaving
+            // State Authority players stationary while local input can still animate.
+            Runner.ProvideInput = true;
             Runner.AddCallbacks(this);
             return true;
+        }
+
+        private void OnCloudConnectionLost(NetworkRunner affectedRunner,
+            ShutdownReason shutdownReason, bool reconnecting)
+        {
+            if (affectedRunner != Runner)
+                return;
+
+            if (reconnecting)
+            {
+                Debug.LogWarning($"Fusion cloud connection lost ({shutdownReason}). Reconnection is in progress.", this);
+                return;
+            }
+
+            isConnected = affectedRunner != null && affectedRunner.IsRunning;
+            // The direct Host/Client transport can still be alive here. This must not
+            // be an error log in a Development Build: Unity opens its blocking console
+            // for errors and makes an otherwise running match look frozen.
+            Debug.LogWarning($"Fusion could not restore the Photon Cloud connection ({shutdownReason}). " +
+                             "Existing directly connected players can continue the current match, " +
+                             "but new players cannot join until the next room.", this);
+        }
+
+        private void OnDestroy()
+        {
+            if (_cloudConnectionLostCallbackRegistered)
+            {
+                NetworkRunner.CloudConnectionLost -= OnCloudConnectionLost;
+                _cloudConnectionLostCallbackRegistered = false;
+            }
+
+            if (Instance == this)
+                Instance = null;
         }
 
         public async void JoinRoom(string sessionName)
@@ -380,7 +439,7 @@ namespace AvocadoShark
 
             var result = await Runner.StartGame(new StartGameArgs()
             {
-                GameMode = GameMode.Shared,
+                GameMode = GameMode.Client,
                 SessionName = sessionName,
                 Scene = SceneRef.FromIndex(buildIndex),
                 // Join only - never create. Without this, a room that closed between the
@@ -430,7 +489,7 @@ namespace AvocadoShark
 
             var result = await Runner.StartGame(new StartGameArgs()
             {
-                GameMode = GameMode.Shared,
+                GameMode = GameMode.Host,
                 SessionName = sessionName,
                 Scene = SceneRef.FromIndex(buildIndex),
                 SessionProperties = sessionProperties,
@@ -484,6 +543,19 @@ namespace AvocadoShark
         //}
         private void SpawnPlayerCharacter(NetworkRunner runner)
         {
+            // Client/Server sessions must spawn every participant from the Host.
+            // Shared Mode keeps its existing local-owner spawn path below.
+            if (runner.GameMode != GameMode.Shared)
+            {
+                if (!runner.IsServer)
+                    return;
+
+                int spawnIndex = 0;
+                foreach (PlayerRef player in runner.ActivePlayers)
+                    SpawnHostPlayerCharacter(runner, player, spawnIndex++);
+                return;
+            }
+
             if (runner.GetPlayerObject(runner.LocalPlayer) != null)
                 return;
 
@@ -493,15 +565,53 @@ namespace AvocadoShark
                 return;
             }
 
+            var location = GetPlayerSpawnLocation(0);
+
+            var playerObject = runner.Spawn(
+                fsNetworkPlayerPrefab,
+                location,
+                Quaternion.identity);
+
+            runner.SetPlayerObject(runner.LocalPlayer, playerObject);
+        }
+
+        private void SpawnHostPlayerCharacter(NetworkRunner runner, PlayerRef player, int spawnIndex)
+        {
+            if (runner.GetPlayerObject(player) != null)
+                return;
+
+            if (fsNetworkPlayerPrefab == null)
+            {
+                Debug.LogError("FS Network Player Prefab is not assigned.");
+                return;
+            }
+
+            var playerObject = runner.Spawn(
+                fsNetworkPlayerPrefab,
+                GetPlayerSpawnLocation(spawnIndex),
+                Quaternion.identity,
+                player);
+
+            if (playerObject != null)
+                runner.SetPlayerObject(player, playerObject);
+        }
+
+        private Vector3 GetPlayerSpawnLocation(int spawnIndex)
+        {
             var location = !UseCustomLocation
                 ? new Vector3(UnityEngine.Random.Range(-7.6f, 14.2f), 0,
-                    UnityEngine.Random.Range(-31.48f, -41.22f))
+                    UnityEngine.Random.Range(-41.22f, -31.48f))
                 : CustomLocation;
 
-            // The FS controller is a child of the network root and has a negative local Y offset.
-            // Treat location.y as the floor height, then lift the network root so the capsule starts
-            // on that floor instead of inheriting the prefab's child offset below it.
-            var characterController = fsNetworkPlayerPrefab.GetComponentInChildren<CharacterController>();
+            // Keep Host-spawned participants apart before the race formation is set.
+            if (spawnIndex > 0)
+                location += new Vector3((spawnIndex % 2) * 1.5f, 0, (spawnIndex / 2) * 1.5f);
+
+            // Treat location.y as floor height and lift the network root to place the
+            // child CharacterController capsule on that floor.
+            var characterController = fsNetworkPlayerPrefab != null
+                ? fsNetworkPlayerPrefab.GetComponentInChildren<CharacterController>()
+                : null;
             if (characterController != null)
             {
                 var controllerBottom = characterController.transform.TransformPoint(
@@ -515,12 +625,7 @@ namespace AvocadoShark
                 Debug.LogWarning("FS Network Player has no CharacterController; spawning without floor-height correction.");
             }
 
-            var playerObject = runner.Spawn(
-                fsNetworkPlayerPrefab,
-                location,
-                Quaternion.identity);
-
-            runner.SetPlayerObject(runner.LocalPlayer, playerObject);
+            return location;
         }
 
         #region INetworkCallbacks
@@ -573,6 +678,78 @@ namespace AvocadoShark
 
         public void OnInput(NetworkRunner runner, NetworkInput input)
         {
+            if (runner.GameMode == GameMode.Shared)
+                return;
+
+            FSPlayerNetworkInput data = default;
+            NetworkObject playerObject = runner.GetPlayerObject(runner.LocalPlayer);
+            if (playerObject != null)
+            {
+                var locomotionInput = playerObject.GetComponentInChildren<LocomotionInputManager>(true);
+                var parkourInput = playerObject.GetComponentInChildren<ParkourInputManager>(true);
+                var playerController = playerObject.GetComponentInChildren<PlayerController>(true);
+
+                if (locomotionInput != null)
+                {
+                    var move = locomotionInput.DirectionInput;
+                    data.Move = Vector2.ClampMagnitude(move, 1f);
+                    data.JumpHeld = locomotionInput.JumpHold;
+                    data.Drop = locomotionInput.Drop;
+                    data.ToggleRun = locomotionInput.ToggleRun;
+                    data.Sprint = locomotionInput.SprintKey;
+                    data.Crouch = locomotionInput.Crouch;
+                    data.QuickSwitchDown = locomotionInput.QuickSwitchItemDown;
+                    data.QuickSwitchUp = locomotionInput.QuickSwitchItemUp;
+                    data.PreviousItem = locomotionInput.CycleToPreviousItem;
+                    data.NextItem = locomotionInput.CycleToNextItem;
+                    data.ThrowDown = locomotionInput.ItemThrowDown;
+                    data.ThrowHeld = locomotionInput.ItemThrowHold;
+                    data.ThrowUp = locomotionInput.ItemThrowUp;
+                    data.ThrowCancel = locomotionInput.ItemThrowCancelDown;
+                }
+
+                // Convert the held input to a single edge. Fusion may request input
+                // several times during one rendered frame; WasPressedThisFrame can
+                // otherwise be true for every simulation tick in that frame.
+                bool jumpHeldNow = data.JumpHeld;
+#if ENABLE_INPUT_SYSTEM
+                if (Keyboard.current != null)
+                    jumpHeldNow |= Keyboard.current.spaceKey.isPressed;
+#endif
+                data.JumpPressed = jumpHeldNow && !_lastInputSample.JumpHeld;
+                data.JumpHeld = jumpHeldNow;
+
+                if (parkourInput != null)
+                    data.JumpFromHang = parkourInput.JumpFromHang;
+
+                var currentInputSample = data;
+                // InputAction WasPressedThisFrame can be observed by multiple Fusion
+                // ticks in one rendered frame. Turn all one-shot controls into edges
+                // so one physical press cannot retrigger during resimulation.
+                data.Drop = data.Drop && !_lastInputSample.Drop;
+                data.ToggleRun = data.ToggleRun && !_lastInputSample.ToggleRun;
+                data.Crouch = data.Crouch && !_lastInputSample.Crouch;
+                data.QuickSwitchDown = data.QuickSwitchDown && !_lastInputSample.QuickSwitchDown;
+                data.QuickSwitchUp = data.QuickSwitchUp && !_lastInputSample.QuickSwitchUp;
+                data.PreviousItem = data.PreviousItem && !_lastInputSample.PreviousItem;
+                data.NextItem = data.NextItem && !_lastInputSample.NextItem;
+                data.ThrowDown = data.ThrowDown && !_lastInputSample.ThrowDown;
+                data.ThrowUp = data.ThrowUp && !_lastInputSample.ThrowUp;
+                data.ThrowCancel = data.ThrowCancel && !_lastInputSample.ThrowCancel;
+                data.JumpFromHang = data.JumpFromHang && !_lastInputSample.JumpFromHang;
+                _lastInputSample = currentInputSample;
+
+                if (playerController != null && playerController.cameraGameObject != null)
+                    data.CameraForward = playerController.cameraGameObject.transform.forward;
+            }
+
+            if (logInputDiagnostics && Time.frameCount - _lastInputDiagnosticFrame >= 120)
+            {
+                _lastInputDiagnosticFrame = Time.frameCount;
+                Debug.Log($"[FS Host Input] mode={runner.GameMode} provideInput={runner.ProvideInput} localPlayer={runner.LocalPlayer} playerObject={(playerObject != null ? playerObject.Id.ToString() : "NULL")} move={data.Move} jump={data.JumpPressed} camera={data.CameraForward}");
+            }
+
+            input.Set(data);
         }
 
         public void OnInputMissing(NetworkRunner runner, PlayerRef player, NetworkInput input)
@@ -591,11 +768,21 @@ namespace AvocadoShark
         {
             if (!playersInSession.Contains(player))
                 playersInSession.Add(player);
+
+            if (runner.GameMode != GameMode.Shared && runner.IsServer && hasEnteredGameScene)
+                SpawnHostPlayerCharacter(runner, player, playersInSession.IndexOf(player));
         }
 
         public void OnPlayerLeft(NetworkRunner runner, PlayerRef player)
         {
             playersInSession.Remove(player);
+
+            if (runner.GameMode != GameMode.Shared && runner.IsServer)
+            {
+                NetworkObject playerObject = runner.GetPlayerObject(player);
+                if (playerObject != null)
+                    runner.Despawn(playerObject);
+            }
         }
         public void OnSceneLoadDone(NetworkRunner runner)
         {
@@ -670,6 +857,7 @@ namespace AvocadoShark
             hasEnteredGameScene = false;
             _initialEnvironmentLoadStarted = false;
             playersInSession.Clear();
+            _lastInputSample = default;
         }
 
         private static int FindBuildIndex(string sceneName)
