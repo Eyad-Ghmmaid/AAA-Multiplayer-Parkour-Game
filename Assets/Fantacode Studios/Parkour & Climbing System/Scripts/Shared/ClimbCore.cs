@@ -54,6 +54,15 @@ namespace FS_ParkourSystem
         public IKweights leftFoot { get; set; } = new IKweights();
         public IKweights head { get; set; } = new IKweights();
 
+        // Last hand IK values actually submitted to Unity's Animator. Network
+        // presentation reads these instead of recalculating contact from a remote
+        // pose whose hand distance can differ by a few interpolated frames.
+        public bool HasAppliedHandIK { get; private set; }
+        public Vector3 AppliedRightHandIKPosition { get; private set; }
+        public Vector3 AppliedLeftHandIKPosition { get; private set; }
+        public float AppliedRightHandIKWeight { get; private set; }
+        public float AppliedLeftHandIKWeight { get; private set; }
+
         // --- IK state ---
         AnimatorHelper animatorHelper = new AnimatorHelper();
         Vector3 lookAtPosition;
@@ -166,6 +175,10 @@ namespace FS_ParkourSystem
         /// </summary>
         public void OnAnimatorIK(int layerIndex)
         {
+            HasAppliedHandIK = false;
+            AppliedRightHandIKWeight = 0f;
+            AppliedLeftHandIKWeight = 0f;
+
             rightHand.boneTransform = animator.GetBoneTransform(HumanBodyBones.RightHand).position;
             leftHand.boneTransform = animator.GetBoneTransform(HumanBodyBones.LeftHand).position;
             rightFoot.boneTransform = animator.GetBoneTransform(HumanBodyBones.RightFoot).position;
@@ -204,6 +217,12 @@ namespace FS_ParkourSystem
                     }
                     animator.SetIKPositionWeight(AvatarIKGoal.RightHand, rightHand.weight);
                     animator.SetIKPositionWeight(AvatarIKGoal.LeftHand, leftHand.weight);
+
+                    AppliedRightHandIKPosition = rightHand.IKPoint;
+                    AppliedLeftHandIKPosition = leftHand.IKPoint;
+                    AppliedRightHandIKWeight = rightHand.weight;
+                    AppliedLeftHandIKWeight = leftHand.weight;
+                    HasAppliedHandIK = true;
                 }
                 else
                 {
@@ -221,8 +240,26 @@ namespace FS_ParkourSystem
                         {
                             bodyPart.previousIkVecPoint = bodyPart.currentIkVecPoint;
                         }
-                        animator.SetIKPosition(ikGoal, curDis < preDis ? bodyPart.currentIkVecPoint : bodyPart.previousIkVecPoint);
-                        animator.SetIKPositionWeight(ikGoal, 0.75f - ((curDis < preDis ? curDis : preDis) - 0.1f) / 0.3f);
+                        Vector3 appliedPosition = curDis < preDis
+                            ? bodyPart.currentIkVecPoint
+                            : bodyPart.previousIkVecPoint;
+                        float appliedWeight = 0.75f
+                            - ((curDis < preDis ? curDis : preDis) - 0.1f) / 0.3f;
+                        animator.SetIKPosition(ikGoal, appliedPosition);
+                        animator.SetIKPositionWeight(ikGoal, appliedWeight);
+
+                        if (ikGoal == AvatarIKGoal.RightHand)
+                        {
+                            AppliedRightHandIKPosition = appliedPosition;
+                            AppliedRightHandIKWeight = appliedWeight;
+                            HasAppliedHandIK = true;
+                        }
+                        else if (ikGoal == AvatarIKGoal.LeftHand)
+                        {
+                            AppliedLeftHandIKPosition = appliedPosition;
+                            AppliedLeftHandIKWeight = appliedWeight;
+                            HasAppliedHandIK = true;
+                        }
                     }
 
                     setIK(rightHand, HumanBodyBones.RightHand, AvatarIKGoal.RightHand);

@@ -152,6 +152,21 @@ public class FSNetworkAuthoritySetup : NetworkBehaviour
                 slidingController.enabled = false;
         }
 
+        // Pose modifiers must follow the same authority boundary as gameplay.
+        // FootIK reads PlayerController.FocusedSystemState, but that controller is
+        // intentionally disabled on a presentation-only client. It would therefore
+        // remain in Locomotion and bend hips/feet during Vault, Hang and Climb.
+        // ClimbCore also owns an OnAnimatorIK callback which competes with the
+        // replicated hand targets. Only State Authority may run either native IK
+        // writer; proxies receive their required hang IK from the network sync.
+        var footIK = GetComponentInChildren<FootIK>(true);
+        if (footIK != null)
+            footIK.enabled = hasStateAuthority;
+
+        var nativeClimbCore = GetComponentInChildren<ClimbCore>(true);
+        if (nativeClimbCore != null)
+            nativeClimbCore.enabled = hasStateAuthority;
+
         if (localCameraRig != null)
             localCameraRig.SetActive(hasInputAuthority);
 

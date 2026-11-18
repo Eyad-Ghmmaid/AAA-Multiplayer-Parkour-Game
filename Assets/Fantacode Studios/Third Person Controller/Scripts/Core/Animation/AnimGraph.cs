@@ -109,7 +109,10 @@ namespace FS_Core
             if (stateHash == 0)
                 return false;
 
-            normalizedTime = Mathf.Repeat(normalizedTime, 1f);
+            // The caller supplies the authoritative entry phase. After this state
+            // change the controller advances locally; it is not hard-sampled every
+            // render frame.
+            normalizedTime = Mathf.Clamp01(normalizedTime);
             transitionDuration = Mathf.Max(0f, transitionDuration);
             bool appliedToPlayable = false;
 
@@ -179,31 +182,64 @@ namespace FS_Core
         }
 
         /// <summary>
-        /// Samples an already active network Animator state without starting another
-        /// transition. This keeps an Input Authority presentation on the Host's
-        /// interpolated animation phase while avoiding repeated CrossFade restarts.
+        /// Reconstructs one authoritative Animator Controller transition on both
+        /// Animator facades. The Host supplies the real source/destination phase,
+        /// duration unit and transition progress, so the owning client does not
+        /// replace every native transition with one arbitrary crossfade duration.
         /// </summary>
-        public bool SampleNetworkAnimatorState(int stateHash, float normalizedTime)
+        public bool PlayNetworkAnimatorTransition(int currentStateHash,
+            float currentNormalizedTime, int nextStateHash, float nextNormalizedTime,
+            float transitionDuration, float normalizedTransitionTime,
+            DurationUnit durationUnit)
         {
-            if (stateHash == 0 || !playableAnimator.IsValid()
-                || playableAnimator.IsInTransition(0))
+            if (currentStateHash == 0 || nextStateHash == 0)
                 return false;
 
-            var playableState = playableAnimator.GetCurrentAnimatorStateInfo(0);
-            if (playableState.fullPathHash != stateHash)
-                return false;
+            currentNormalizedTime = Mathf.Clamp01(currentNormalizedTime);
+            nextNormalizedTime = Mathf.Clamp01(nextNormalizedTime);
+            transitionDuration = Mathf.Max(0f, transitionDuration);
+            normalizedTransitionTime = Mathf.Clamp01(normalizedTransitionTime);
+            bool fixedDuration = durationUnit == DurationUnit.Fixed;
+            // AnimatorControllerPlayable has no overload that accepts a normalized
+            // transition progress. Start from the authoritative source pose and
+            // blend only for the remaining portion instead of replaying the full
+            // transition from its beginning.
+            float remainingTransitionDuration = transitionDuration
+                * (1f - normalizedTransitionTime);
+            bool appliedToPlayable = false;
 
-            normalizedTime = Mathf.Repeat(normalizedTime, 1f);
-            playableAnimator.Play(stateHash, 0, normalizedTime);
-
-            // Keep the Animator facade aligned for IK and third-party state queries.
-            if (animator != null && !animator.IsInTransition(0)
-                && animator.GetCurrentAnimatorStateInfo(0).fullPathHash == stateHash)
+            if (playableAnimator.IsValid())
             {
-                animator.Play(stateHash, 0, normalizedTime);
+                playableAnimator.Play(currentStateHash, 0, currentNormalizedTime);
+                if (fixedDuration)
+                {
+                    playableAnimator.CrossFadeInFixedTime(nextStateHash,
+                        remainingTransitionDuration, 0, nextNormalizedTime);
+                }
+                else
+                {
+                    playableAnimator.CrossFade(nextStateHash,
+                        remainingTransitionDuration, 0, nextNormalizedTime);
+                }
+                appliedToPlayable = true;
             }
 
-            return true;
+            if (animator != null)
+            {
+                animator.Play(currentStateHash, 0, currentNormalizedTime);
+                if (fixedDuration)
+                {
+                    animator.CrossFadeInFixedTime(nextStateHash, transitionDuration,
+                        0, nextNormalizedTime, normalizedTransitionTime);
+                }
+                else
+                {
+                    animator.CrossFade(nextStateHash, transitionDuration, 0,
+                        nextNormalizedTime, normalizedTransitionTime);
+                }
+            }
+
+            return appliedToPlayable;
         }
 
         /// <summary>
@@ -249,6 +285,94 @@ namespace FS_Core
             currentClipStateInfo.timer = (float)clipTime;
             currentClipStateInfo.deltaTime = 0f;
             return true;
+        }
+
+        /// <summary>
+        /// Reads the visible weight of the currently network-driven action clip.
+        /// Network presentation uses this when the authoritative action ends so it
+        /// can blend back to the Animator Controller before rebuilding the graph.
+        /// </summary>
+        public bool TryGetNetworkPresentationWeight(out float weight)
+        {
+            weight = 0f;
+            var mixer = currentClipStateInfo.currentMixer;
+            if (!mixer.IsValid() || mixer.GetInputCount() < 2)
+                return false;
+
+            weight = mixer.GetInputWeight(1);
+            return true;
+        }
+
+        /// <summary>
+        /// Blends the current network action against its Animator Controller base.
+        /// This only changes presentation weights; gameplay and root motion remain
+        /// owned by the State Authority.
+        /// </summary>
+        public bool SetNetworkPresentationWeight(float weight)
+        {
+            var mixer = currentClipStateInfo.currentMixer;
+            if (!mixer.IsValid() || mixer.GetInputCount() < 2)
+                return false;
+
+            weight = Mathf.Clamp01(weight);
+            mixer.SetInputWeight(0, 1f - weight);
+            mixer.SetInputWeight(1, weight);
+            return true;
+        }
+
+        /// <summary>
+        /// Removes the finished network action branch without recreating the whole
+        /// graph. Rebuilding the graph also recreates AnimatorControllerPlayable and
+        /// loses an in-progress Hang/Climb transition, which is visible on the owning
+        /// client as a hard pose cut. The action branch is detached from the shared
+        /// loop/base branch before it is destroyed so the controller state survives.
+        /// </summary>
+        public bool ReleaseNetworkPresentationToAnimatorBase()
+        {
+            if (!graph.IsValid() || !actionMixer.IsValid() || !loopActionMixer.IsValid())
+                return false;
+
+            var actionRoot = actionMixer.GetInput(0);
+            if (actionRoot.IsValid() && !actionRoot.Equals(loopActionMixer))
+            {
+                actionMixer.DisconnectInput(0);
+
+                // Action mixers form a chain whose oldest input eventually points at
+                // loopActionMixer. Protect that shared base before destroying only the
+                // disposable action subgraph.
+                DetachPlayableReference(actionRoot, loopActionMixer, new HashSet<Playable>());
+                graph.Connect(loopActionMixer, 0, actionMixer, 0);
+                graph.DestroySubgraph(actionRoot);
+            }
+            else if (!actionRoot.IsValid())
+            {
+                graph.Connect(loopActionMixer, 0, actionMixer, 0);
+            }
+
+            SetDefaultMixerWeights(actionMixer);
+            currentClipStateInfo = new CurrentClipStateInfo();
+            currentAnimationIsAdditive = false;
+            isLastAnimationNonTransitionBack = false;
+            return true;
+        }
+
+        private static void DetachPlayableReference(Playable root, Playable protectedPlayable,
+            HashSet<Playable> visited)
+        {
+            if (!root.IsValid() || !visited.Add(root))
+                return;
+
+            for (int i = root.GetInputCount() - 1; i >= 0; i--)
+            {
+                var input = root.GetInput(i);
+                if (!input.IsValid())
+                    continue;
+
+                if (input.Equals(protectedPlayable))
+                    root.DisconnectInput(i);
+                else
+                    DetachPlayableReference(input, protectedPlayable, visited);
+            }
         }
 
         private static void SetPlayableTreeTimeAndSpeed(Playable playable, double time, double speed)

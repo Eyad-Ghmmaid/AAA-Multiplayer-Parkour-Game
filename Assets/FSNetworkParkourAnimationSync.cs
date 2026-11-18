@@ -31,8 +31,11 @@ public class FSNetworkParkourAnimationSync : NetworkBehaviour
     [Networked] private float ActiveGraphNormalizedTime { get; set; }
     [Networked] private int ActionSequence { get; set; }
     [Networked] private NetworkBool RemoteHangIKActive { get; set; }
+    [Networked] private NetworkBool RemoteHangIKStable { get; set; }
     [Networked] private Vector3 RemoteRightHandTarget { get; set; }
     [Networked] private Vector3 RemoteLeftHandTarget { get; set; }
+    [Networked] private float RemoteRightHandIKWeight { get; set; }
+    [Networked] private float RemoteLeftHandIKWeight { get; set; }
     [Networked] private float NetworkMoveAmount { get; set; }
     [Networked] private float NetworkStrafeAmount { get; set; }
     [Networked] private float NetworkRotation { get; set; }
@@ -56,6 +59,14 @@ public class FSNetworkParkourAnimationSync : NetworkBehaviour
     [Networked] private int NetworkOwnerBaseStateHash { get; set; }
     [Networked] private float NetworkOwnerBaseStateNormalizedTime { get; set; }
     [Networked] private int NetworkOwnerBaseStateSequence { get; set; }
+    [Networked] private int NetworkOwnerCurrentStateHash { get; set; }
+    [Networked] private float NetworkOwnerCurrentStateNormalizedTime { get; set; }
+    [Networked] private int NetworkOwnerNextStateHash { get; set; }
+    [Networked] private float NetworkOwnerNextStateNormalizedTime { get; set; }
+    [Networked] private NetworkBool NetworkOwnerIsInTransition { get; set; }
+    [Networked] private float NetworkOwnerTransitionDuration { get; set; }
+    [Networked] private float NetworkOwnerTransitionNormalizedTime { get; set; }
+    [Networked] private int NetworkOwnerTransitionDurationUnit { get; set; }
 
     private ActionExecutor actionExecutor;
     private AnimGraph animGraph;
@@ -84,10 +95,17 @@ public class FSNetworkParkourAnimationSync : NetworkBehaviour
     private Coroutine proxyGraphRecoveryCoroutine;
     private int lastAppliedOwnerBaseStateHash;
     private int lastAppliedOwnerBaseStateSequence = -1;
-    private int lastCapturedAuthorityBaseStateHash;
+    private int lastCapturedAuthorityCurrentStateHash;
+    private int lastCapturedAuthorityNextStateHash;
+    private bool lastCapturedAuthorityWasInTransition;
     private bool hasCapturedAuthorityBaseState;
     private int ownerMecanimCueSequence = -1;
     private string ownerMecanimCueName;
+    private float ownerMecanimCueTransitionIn;
+    private bool ownerMecanimCueUsesFixedTransition;
+    private bool ownerMecanimCueWaitingForAnimatorSnapshot;
+    private int ownerMecanimCueBaselineBaseStateSequence = int.MinValue;
+    private int lastObservedOwnerBaseStateSequence = -1;
     private bool forceOwnerBaseStateAfterCue;
     private bool ownerMecanimActionActive;
     private string ownerMecanimActionName;
@@ -99,7 +117,16 @@ public class FSNetworkParkourAnimationSync : NetworkBehaviour
     private int proxyGraphActionSequence = -1;
     private float proxyGraphTransitionIn;
     private float proxyGraphTransitionOut;
+    private bool proxyGraphReleasePending;
+    private bool proxyGraphReleaseInProgress;
+    private int proxyGraphReleaseSequence = -1;
+    private Coroutine proxyGraphReleaseCoroutine;
     private bool proxySlideActive;
+    private float proxyRightHandIKWeight;
+    private float proxyLeftHandIKWeight;
+    private Vector3 proxyRightHandTarget;
+    private Vector3 proxyLeftHandTarget;
+    private bool proxyHangTargetsInitialized;
     private readonly Dictionary<string, AnimGraphClipInfo> clipInfoCache =
         new Dictionary<string, AnimGraphClipInfo>(StringComparer.Ordinal);
 
@@ -226,35 +253,46 @@ public class FSNetworkParkourAnimationSync : NetworkBehaviour
         NetworkMirrorJump = animator.GetBool(AnimatorParameters.mirrorJump);
         NetworkBackJumpMode = animator.GetBool(AnimatorParameters.BackJumpMode);
 
-        // Fusion's NetworkMecanimAnimator applies only to NetworkObject.IsProxy.
-        // An owning client (Input Authority) is explicitly not a proxy, so capture
-        // the authoritative Base Layer state for that client on our render timeline.
-        AnimatorStateInfo baseState = animator.GetCurrentAnimatorStateInfo(0);
-        if (animator.IsInTransition(0))
-        {
-            AnimatorStateInfo nextState = animator.GetNextAnimatorStateInfo(0);
-            if (nextState.fullPathHash != 0)
-                baseState = nextState;
-        }
-        // Keep the time unwrapped on the wire. Interpolating 0.99 -> 0.01 at a
-        // looping-state boundary would otherwise sample the middle of the clip and
-        // create a visible pose jump. Consumers repeat it only when applying it.
-        float baseStateNormalizedTime = baseState.normalizedTime;
+        // NetworkMecanimAnimator does not render an Input Authority object. Capture
+        // the complete Base Layer transition instead of reducing it to only the
+        // destination state. Without source, progress, duration and duration unit,
+        // the owner had to invent a crossfade and could never match the Host.
+        AnimatorStateInfo currentState = animator.GetCurrentAnimatorStateInfo(0);
+        bool isInTransition = animator.IsInTransition(0);
+        AnimatorStateInfo nextState = isInTransition
+            ? animator.GetNextAnimatorStateInfo(0)
+            : default;
+        AnimatorTransitionInfo transitionInfo = isInTransition
+            ? animator.GetAnimatorTransitionInfo(0)
+            : default;
 
-        // Do not treat normalized-time wrapping as a new occurrence. Some FS states
-        // report loop=false but remain active long enough for normalizedTime to wrap;
-        // the old heuristic restarted those states about once per second on the
-        // owning client. Repeated entries into the same state are carried by the
-        // reliable action cue below instead.
+        int nextStateHash = isInTransition ? nextState.fullPathHash : 0;
+        AnimatorStateInfo presentationState = nextStateHash != 0 ? nextState : currentState;
+
+        NetworkOwnerCurrentStateHash = currentState.fullPathHash;
+        NetworkOwnerCurrentStateNormalizedTime = currentState.normalizedTime;
+        NetworkOwnerNextStateHash = nextStateHash;
+        NetworkOwnerNextStateNormalizedTime = nextStateHash != 0 ? nextState.normalizedTime : 0f;
+        NetworkOwnerIsInTransition = isInTransition && nextStateHash != 0;
+        NetworkOwnerTransitionDuration = isInTransition ? transitionInfo.duration : 0f;
+        NetworkOwnerTransitionNormalizedTime = isInTransition ? transitionInfo.normalizedTime : 0f;
+        NetworkOwnerTransitionDurationUnit = isInTransition ? (int)transitionInfo.durationUnit : 0;
+
+        // A transition start and its completion are separate presentation events.
+        // Increment only when that signature changes, never when loop time wraps.
         bool stateChanged = !hasCapturedAuthorityBaseState
-            || baseState.fullPathHash != lastCapturedAuthorityBaseStateHash;
+            || currentState.fullPathHash != lastCapturedAuthorityCurrentStateHash
+            || nextStateHash != lastCapturedAuthorityNextStateHash
+            || isInTransition != lastCapturedAuthorityWasInTransition;
 
         if (stateChanged)
             NetworkOwnerBaseStateSequence++;
 
-        NetworkOwnerBaseStateHash = baseState.fullPathHash;
-        NetworkOwnerBaseStateNormalizedTime = baseStateNormalizedTime;
-        lastCapturedAuthorityBaseStateHash = baseState.fullPathHash;
+        NetworkOwnerBaseStateHash = presentationState.fullPathHash;
+        NetworkOwnerBaseStateNormalizedTime = presentationState.normalizedTime;
+        lastCapturedAuthorityCurrentStateHash = currentState.fullPathHash;
+        lastCapturedAuthorityNextStateHash = nextStateHash;
+        lastCapturedAuthorityWasInTransition = isInTransition;
         hasCapturedAuthorityBaseState = true;
     }
 
@@ -290,8 +328,15 @@ public class FSNetworkParkourAnimationSync : NetworkBehaviour
         // AnimGraph owns the final pose while a vault/step/climb clip is active.
         // Crossfading the underlying Animator Controller at the same time creates
         // a second presentation writer and can make the clip appear to skip.
-        if (!proxyGraphActionPlaying)
+        if (!proxyGraphActionPlaying || proxyGraphReleasePending || proxyGraphReleaseInProgress)
             ApplyOwnerBaseState(interpolator);
+
+        // Keep observing the render timeline even while an AnimGraph clip owns the
+        // final pose. A following Mecanim cue uses this value to distinguish its
+        // first real Animator snapshot from the pre-action snapshot captured in the
+        // same simulation tick as ActionSequence.
+        lastObservedOwnerBaseStateSequence = interpolator.Int(
+            nameof(NetworkOwnerBaseStateSequence));
     }
 
     private void ApplyOwnerBaseState(NetworkBehaviourBufferInterpolator interpolator)
@@ -303,51 +348,82 @@ public class FSNetworkParkourAnimationSync : NetworkBehaviour
         int authorityStateSequence = interpolator.Int(nameof(NetworkOwnerBaseStateSequence));
         float normalizedTime = Mathf.Repeat(
             interpolator.Float(nameof(NetworkOwnerBaseStateNormalizedTime)), 1f);
+        bool authorityIsInTransition = interpolator.NetworkBool(
+            nameof(NetworkOwnerIsInTransition));
+        int authorityCurrentStateHash = interpolator.Int(
+            nameof(NetworkOwnerCurrentStateHash));
+        float authorityCurrentNormalizedTime = interpolator.Float(
+            nameof(NetworkOwnerCurrentStateNormalizedTime));
+        int authorityNextStateHash = interpolator.Int(
+            nameof(NetworkOwnerNextStateHash));
+        float authorityNextNormalizedTime = interpolator.Float(
+            nameof(NetworkOwnerNextStateNormalizedTime));
+        float authorityTransitionDuration = interpolator.Float(
+            nameof(NetworkOwnerTransitionDuration));
+        float authorityTransitionNormalizedTime = interpolator.Float(
+            nameof(NetworkOwnerTransitionNormalizedTime));
+        DurationUnit authorityTransitionDurationUnit = (DurationUnit)interpolator.Int(
+            nameof(NetworkOwnerTransitionDurationUnit));
 
-        // A reliable Mecanim cue reaches the owning client before the matching
-        // interpolated snapshot. Until that snapshot catches up, applying the old
-        // base state here would immediately undo the correctly timed cue.
+        // Reliable RPCs arrive ahead of Fusion's interpolated render timeline.
+        // Treat the Mecanim cue only as a sequence fence: starting the animation
+        // from time zero in the RPC made the owner's pose lead its NetworkTransform
+        // by several ticks. Hang, swing and ladder chains then appeared delayed or
+        // snapped when the matching snapshot finally arrived.
         bool forceApplyBaseState = false;
+        string queuedMecanimStateName = null;
+        float queuedMecanimTransitionIn = 0f;
+        bool queuedMecanimUsesFixedTransition = false;
         if (ownerMecanimCueSequence >= 0)
         {
             int renderedActionSequence = interpolator.Int(nameof(ActionSequence));
             if (renderedActionSequence < ownerMecanimCueSequence)
                 return;
 
-            forceApplyBaseState = forceOwnerBaseStateAfterCue;
-
-            // The snapshot is now authoritative again. When it identifies the same
-            // action already started by the cue, adopt its sequence without a
-            // second CrossFade that would visibly restart the animation.
-            AnimatorStateInfo currentState = animator.GetCurrentAnimatorStateInfo(0);
-            bool localStateMatchesCue = !string.IsNullOrWhiteSpace(ownerMecanimCueName)
-                && currentState.IsName(ownerMecanimCueName);
-            if (!localStateMatchesCue && animator.IsInTransition(0))
+            bool startsMecanimAction = !string.IsNullOrWhiteSpace(ownerMecanimCueName);
+            forceApplyBaseState = forceOwnerBaseStateAfterCue || startsMecanimAction;
+            if (startsMecanimAction)
             {
-                AnimatorStateInfo nextState = animator.GetNextAnimatorStateInfo(0);
-                localStateMatchesCue = nextState.IsName(ownerMecanimCueName);
+                // ActionExecutor raises OnActionStarted immediately before calling
+                // Animator.CrossFade. If FixedUpdateNetwork captures that frame, the
+                // ActionSequence already changed while the Animator snapshot still
+                // contains the previous hang state. Wait for the first changed
+                // Animator signature instead of applying the old state's phase to
+                // the new action name (the crouched/embedded poses in the client).
+                if (ownerMecanimCueBaselineBaseStateSequence == int.MinValue)
+                    ownerMecanimCueBaselineBaseStateSequence = lastObservedOwnerBaseStateSequence;
+
+                bool animatorSnapshotStillPreAction = !authorityIsInTransition
+                    && ownerMecanimCueBaselineBaseStateSequence >= 0
+                    && authorityStateSequence == ownerMecanimCueBaselineBaseStateSequence;
+                if (animatorSnapshotStillPreAction)
+                {
+                    if (!ownerMecanimCueWaitingForAnimatorSnapshot)
+                    {
+                        LogDiagnostic($"HOLD owner Mecanim state '{ownerMecanimCueName}' seq={ownerMecanimCueSequence}; render snapshot still has pre-action Animator state");
+                        ownerMecanimCueWaitingForAnimatorSnapshot = true;
+                    }
+                    return;
+                }
+
+                queuedMecanimStateName = ownerMecanimCueName;
+                queuedMecanimTransitionIn = ownerMecanimCueTransitionIn;
+                queuedMecanimUsesFixedTransition = ownerMecanimCueUsesFixedTransition;
             }
 
-            if (localStateMatchesCue)
-            {
-                // Remember the full-path hash of the one-shot state. The reliable
-                // clear can arrive one render snapshot before the authority's
-                // Locomotion state. Without this marker that delayed action snapshot
-                // is sampled once more, which makes FallingToRoll/Landing visibly
-                // bend the character a second time after it already stood up.
-                if (ownerMecanimActionActive && ownerMecanimActionStateHash == 0)
-                    ownerMecanimActionStateHash = authorityStateHash;
-
-                lastAppliedOwnerBaseStateHash = authorityStateHash;
-                lastAppliedOwnerBaseStateSequence = authorityStateSequence;
-                ownerMecanimCueSequence = -1;
-                ownerMecanimCueName = null;
-                forceOwnerBaseStateAfterCue = false;
-                return;
-            }
+            // The first snapshot carrying the cue supplies both the authoritative
+            // state and its already elapsed phase. Apply that state once below. This
+            // keeps presentation and root position on one timeline instead of
+            // starting at normalized time zero when the RPC happens to arrive.
+            if (startsMecanimAction && ownerMecanimActionActive)
+                ownerMecanimActionStateHash = authorityStateHash;
 
             ownerMecanimCueSequence = -1;
             ownerMecanimCueName = null;
+            ownerMecanimCueTransitionIn = 0f;
+            ownerMecanimCueUsesFixedTransition = false;
+            ownerMecanimCueWaitingForAnimatorSnapshot = false;
+            ownerMecanimCueBaselineBaseStateSequence = int.MinValue;
             forceOwnerBaseStateAfterCue = false;
         }
 
@@ -369,15 +445,86 @@ public class FSNetworkParkourAnimationSync : NetworkBehaviour
             forceApplyBaseState = true;
         }
 
-        // The authority increments the snapshot sequence whenever it briefly sees a
-        // transition. Interpolation can skip that transient hash and expose the same
-        // final state with a newer sequence. Re-crossfading that identical hash makes
-        // the owning client restart locomotion, hang and climb states every few ticks.
-        // Reliable action cues above already cover intentional re-entry into a state.
+        // Rebuild the Host's actual transition once per transition signature. The
+        // old implementation discarded this data and replaced every controller
+        // transition with 0.12/0.18 seconds, so improving one action necessarily
+        // changed another action whose native transition used different timing.
+        if (authorityIsInTransition
+            && authorityCurrentStateHash != 0
+            && authorityNextStateHash == authorityStateHash)
+        {
+            if (!forceApplyBaseState && animator.IsInTransition(0)
+                && animator.GetNextAnimatorStateInfo(0).fullPathHash == authorityNextStateHash)
+            {
+                lastAppliedOwnerBaseStateHash = authorityStateHash;
+                lastAppliedOwnerBaseStateSequence = authorityStateSequence;
+                return;
+            }
+
+            if (!forceApplyBaseState
+                && authorityStateSequence == lastAppliedOwnerBaseStateSequence)
+                return;
+
+            bool appliedTransition = animGraph != null
+                && animGraph.PlayNetworkAnimatorTransition(
+                    authorityCurrentStateHash,
+                    Mathf.Repeat(authorityCurrentNormalizedTime, 1f),
+                    authorityNextStateHash,
+                    Mathf.Repeat(authorityNextNormalizedTime, 1f),
+                    authorityTransitionDuration, authorityTransitionNormalizedTime,
+                    authorityTransitionDurationUnit);
+
+            if (!appliedTransition)
+            {
+                animator.Play(authorityCurrentStateHash, 0,
+                    Mathf.Repeat(authorityCurrentNormalizedTime, 1f));
+                if (authorityTransitionDurationUnit == DurationUnit.Fixed)
+                {
+                    animator.CrossFadeInFixedTime(authorityNextStateHash,
+                        Mathf.Max(0f, authorityTransitionDuration), 0,
+                        Mathf.Repeat(authorityNextNormalizedTime, 1f),
+                        Mathf.Clamp01(authorityTransitionNormalizedTime));
+                }
+                else
+                {
+                    animator.CrossFade(authorityNextStateHash,
+                        Mathf.Max(0f, authorityTransitionDuration), 0,
+                        Mathf.Repeat(authorityNextNormalizedTime, 1f),
+                        Mathf.Clamp01(authorityTransitionNormalizedTime));
+                }
+            }
+
+            LogDiagnostic($"OWNER TRANSITION apply seq={authorityStateSequence} from={authorityCurrentStateHash} to={authorityNextStateHash} progress={authorityTransitionNormalizedTime:0.###} duration={authorityTransitionDuration:0.###} unit={authorityTransitionDurationUnit}");
+            lastAppliedOwnerBaseStateHash = authorityStateHash;
+            lastAppliedOwnerBaseStateSequence = authorityStateSequence;
+            return;
+        }
+
+        // ClimbPoint actions frequently chain through controller transitions such
+        // as Predictive -> HangIdles -> BracedHangClimb. The local controller has
+        // the same transition and may already be blending to the authoritative
+        // state. Starting another CrossFade here restarts that blend and produces
+        // the short stop/pop seen only by the owning client. Adopt the transition
+        // instead; once it completes, the normal same-state branch below resumes
+        // authoritative time sampling.
+        if (!forceApplyBaseState && animator.IsInTransition(0))
+        {
+            AnimatorStateInfo localNextState = animator.GetNextAnimatorStateInfo(0);
+            if (localNextState.fullPathHash == authorityStateHash)
+            {
+                lastAppliedOwnerBaseStateHash = authorityStateHash;
+                lastAppliedOwnerBaseStateSequence = authorityStateSequence;
+                return;
+            }
+        }
+
+        // Once the authoritative state is active, let the local Animator advance it
+        // continuously. Replaying the same normalized snapshot with Animator.Play
+        // every Render frame freezes locomotion whenever the render buffer pauses or
+        // a Blend Tree reports an unreliable loop flag. State changes and reliable
+        // action cues still perform explicit synchronization above and below.
         if (!forceApplyBaseState && authorityStateHash == lastAppliedOwnerBaseStateHash)
         {
-            if (animGraph != null)
-                animGraph.SampleNetworkAnimatorState(authorityStateHash, normalizedTime);
             lastAppliedOwnerBaseStateSequence = authorityStateSequence;
             return;
         }
@@ -394,18 +541,48 @@ public class FSNetworkParkourAnimationSync : NetworkBehaviour
             return;
 
         AnimatorStateInfo current = animator.GetCurrentAnimatorStateInfo(0);
-        float transitionDuration = lastAppliedOwnerBaseStateHash == 0 ? 0f : 0.06f;
+        // Match the visible softness of the FS controller. 60 ms was shorter than
+        // a few rendered frames at common client frame rates and made Balance,
+        // HangIdles and Climb Up look like hard pose switches. Action exits get a
+        // little more time because their root-motion pose is farther from idle.
+        bool hasQueuedMecanimState = !string.IsNullOrWhiteSpace(queuedMecanimStateName);
+        float transitionDuration = hasQueuedMecanimState
+            ? Mathf.Max(0f, queuedMecanimTransitionIn)
+            : (lastAppliedOwnerBaseStateHash == 0
+                ? 0f
+                : (forceApplyBaseState ? 0.18f : 0.12f));
         bool appliedToPlayable = animGraph != null
-            && animGraph.PlayNetworkAnimatorState(authorityStateHash, normalizedTime, transitionDuration);
+            && (hasQueuedMecanimState
+                ? animGraph.PlayNetworkAnimatorState(queuedMecanimStateName,
+                    normalizedTime, transitionDuration, queuedMecanimUsesFixedTransition)
+                : animGraph.PlayNetworkAnimatorState(authorityStateHash,
+                    normalizedTime, transitionDuration));
 
         // AnimGraph is required by Spawned(), but retain a defensive fallback so a
         // partially restored prefab does not silently lose every owner animation.
         if (!appliedToPlayable)
         {
             if (transitionDuration <= Mathf.Epsilon)
-                animator.Play(authorityStateHash, 0, normalizedTime);
+            {
+                if (hasQueuedMecanimState)
+                    animator.Play(queuedMecanimStateName, 0, normalizedTime);
+                else
+                    animator.Play(authorityStateHash, 0, normalizedTime);
+            }
+            else if (hasQueuedMecanimState && queuedMecanimUsesFixedTransition)
+            {
+                animator.CrossFadeInFixedTime(queuedMecanimStateName,
+                    transitionDuration, 0, normalizedTime);
+            }
+            else if (hasQueuedMecanimState)
+            {
+                animator.CrossFade(queuedMecanimStateName,
+                    transitionDuration, 0, normalizedTime);
+            }
             else
+            {
                 animator.CrossFade(authorityStateHash, transitionDuration, 0, normalizedTime);
+            }
         }
 
         LogDiagnostic($"OWNER STATE apply seq={authorityStateSequence} hash={authorityStateHash} normalized={normalizedTime:0.###} local={current.fullPathHash}");
@@ -431,19 +608,24 @@ public class FSNetworkParkourAnimationSync : NetworkBehaviour
 
     private void UpdateRemoteHangIKState()
     {
-        bool isStableHang = parkourController != null
+        bool hasHangTargets = parkourController != null
             && parkourController.IsHanging
-            && !parkourController.InAction
             && climbController != null
             && climbController.currentPoint != null
-            && climbCore != null;
+            && climbCore != null
+            && climbCore.HasAppliedHandIK;
 
-        RemoteHangIKActive = isStableHang;
-        if (!isStableHang)
+        RemoteHangIKActive = hasHangTargets;
+        RemoteHangIKStable = hasHangTargets && !parkourController.InAction;
+        if (!hasHangTargets)
+        {
+            RemoteRightHandIKWeight = 0f;
+            RemoteLeftHandIKWeight = 0f;
             return;
+        }
 
-        Vector3 rightTarget = climbCore.rightHand.currentIkVecPoint;
-        Vector3 leftTarget = climbCore.leftHand.currentIkVecPoint;
+        Vector3 rightTarget = climbCore.AppliedRightHandIKPosition;
+        Vector3 leftTarget = climbCore.AppliedLeftHandIKPosition;
 
         // The FS hang setup normally initializes these from the active ClimbPoint.
         // Rebuild them if the network tick arrives just before that initialization.
@@ -452,8 +634,13 @@ public class FSNetworkParkourAnimationSync : NetworkBehaviour
         if (leftTarget == Vector3.zero)
             leftTarget = climbController.GetHandPos(climbController.currentPoint.transform, AvatarTarget.LeftHand);
 
-        RemoteRightHandTarget = rightTarget;
-        RemoteLeftHandTarget = leftTarget;
+        // Send targets in player-local space. Reconstructing them from the owning
+        // client's interpolated NetworkTransform keeps the hands and the rendered
+        // body on exactly the same timeline during catches and root-motion climbs.
+        RemoteRightHandTarget = transform.InverseTransformPoint(rightTarget);
+        RemoteLeftHandTarget = transform.InverseTransformPoint(leftTarget);
+        RemoteRightHandIKWeight = climbCore.AppliedRightHandIKWeight;
+        RemoteLeftHandIKWeight = climbCore.AppliedLeftHandIKWeight;
     }
 
     /// <summary>
@@ -463,13 +650,67 @@ public class FSNetworkParkourAnimationSync : NetworkBehaviour
     /// </summary>
     public bool ApplyProxyHangIK(Animator targetAnimator)
     {
-        if (HasStateAuthority || !RemoteHangIKActive || targetAnimator == null)
+        if (HasStateAuthority || targetAnimator == null)
             return false;
 
-        targetAnimator.SetIKPosition(AvatarIKGoal.RightHand, RemoteRightHandTarget);
-        targetAnimator.SetIKPosition(AvatarIKGoal.LeftHand, RemoteLeftHandTarget);
-        targetAnimator.SetIKPositionWeight(AvatarIKGoal.RightHand, 1f);
-        targetAnimator.SetIKPositionWeight(AvatarIKGoal.LeftHand, 1f);
+        const float targetFollowSharpness = 24f;
+
+        var interpolator = new NetworkBehaviourBufferInterpolator(this);
+        bool remoteHangIKActive = interpolator.NetworkBool(nameof(RemoteHangIKActive));
+        Vector3 rightHandLocalTarget = interpolator.Vector3(nameof(RemoteRightHandTarget));
+        Vector3 leftHandLocalTarget = interpolator.Vector3(nameof(RemoteLeftHandTarget));
+        float renderedRightHandWeight = interpolator.Float(nameof(RemoteRightHandIKWeight));
+        float renderedLeftHandWeight = interpolator.Float(nameof(RemoteLeftHandIKWeight));
+        Vector3 renderedRightHandTarget = transform.TransformPoint(rightHandLocalTarget);
+        Vector3 renderedLeftHandTarget = transform.TransformPoint(leftHandLocalTarget);
+
+        if (remoteHangIKActive)
+        {
+            if (!proxyHangTargetsInitialized)
+            {
+                proxyRightHandTarget = renderedRightHandTarget;
+                proxyLeftHandTarget = renderedLeftHandTarget;
+                proxyHangTargetsInitialized = true;
+            }
+            else
+            {
+                float follow = 1f - Mathf.Exp(-targetFollowSharpness * Time.unscaledDeltaTime);
+                proxyRightHandTarget = Vector3.Lerp(proxyRightHandTarget,
+                    renderedRightHandTarget, follow);
+                proxyLeftHandTarget = Vector3.Lerp(proxyLeftHandTarget,
+                    renderedLeftHandTarget, follow);
+            }
+        }
+
+        float rightTargetWeight = 0f;
+        float leftTargetWeight = 0f;
+        if (remoteHangIKActive && proxyHangTargetsInitialized)
+        {
+            // Match the values actually submitted by the State Authority. Deriving
+            // them again from the owner's interpolated hand distance made Swing
+            // alternate between animation pose and bar contact across adjacent
+            // frames even though the Host maintained one continuous grip.
+            rightTargetWeight = Mathf.Clamp01(renderedRightHandWeight);
+            leftTargetWeight = Mathf.Clamp01(renderedLeftHandWeight);
+        }
+
+        // The NetworkBehaviour interpolator already provides the smooth render-time
+        // weight. A second local MoveTowards introduced an avoidable phase lag.
+        proxyRightHandIKWeight = rightTargetWeight;
+        proxyLeftHandIKWeight = leftTargetWeight;
+
+        if ((proxyRightHandIKWeight <= 0.0001f && proxyLeftHandIKWeight <= 0.0001f)
+            || !proxyHangTargetsInitialized)
+        {
+            if (!remoteHangIKActive)
+                proxyHangTargetsInitialized = false;
+            return false;
+        }
+
+        targetAnimator.SetIKPosition(AvatarIKGoal.RightHand, proxyRightHandTarget);
+        targetAnimator.SetIKPosition(AvatarIKGoal.LeftHand, proxyLeftHandTarget);
+        targetAnimator.SetIKPositionWeight(AvatarIKGoal.RightHand, proxyRightHandIKWeight);
+        targetAnimator.SetIKPositionWeight(AvatarIKGoal.LeftHand, proxyLeftHandIKWeight);
         return true;
     }
 
@@ -520,10 +761,20 @@ public class FSNetworkParkourAnimationSync : NetworkBehaviour
         ApplyOwnerLocomotionParameters();
         ApplyProxySlidePresentation();
 
-        if (!HasStateAuthority && proxyGraphActionPlaying && animGraph != null)
+        if (!HasStateAuthority && proxyGraphActionPlaying
+            && !proxyGraphReleaseInProgress && animGraph != null)
         {
             var interpolator = new NetworkBehaviourBufferInterpolator(this);
             int renderedActionSequence = interpolator.Int(nameof(ActionSequence));
+
+            if (proxyGraphReleasePending
+                && renderedActionSequence >= proxyGraphReleaseSequence)
+            {
+                // Do not sample normalized time zero from the clear snapshot into
+                // the finished clip. Preserve its last pose and blend that pose out.
+                StartProxyGraphBlendOut();
+                return;
+            }
 
             // A reliable start RPC can arrive before the matching interpolated
             // snapshot. Sampling the previous action's normalized time into the new
@@ -533,7 +784,8 @@ public class FSNetworkParkourAnimationSync : NetworkBehaviour
                 ? interpolator.Float(nameof(ActiveGraphNormalizedTime))
                 : 0f;
             hasRenderedGraphTime = animGraph.SetNetworkPresentationNormalizedTime(
-                renderedGraphNormalizedTime, proxyGraphTransitionIn, proxyGraphTransitionOut);
+                renderedGraphNormalizedTime, proxyGraphTransitionIn,
+                proxyGraphTransitionOut, transitionBack: proxyGraphReleasePending);
         }
 
         if (HasStateAuthority || initializedProxyAnimationState)
@@ -575,15 +827,22 @@ public class FSNetworkParkourAnimationSync : NetworkBehaviour
 
     private void LateUpdate()
     {
-        if (HasStateAuthority || !proxyGraphActionPlaying || !hasRenderedGraphTime || animGraph == null)
+        if (HasStateAuthority || !proxyGraphActionPlaying || proxyGraphReleaseInProgress
+            || !hasRenderedGraphTime || animGraph == null)
             return;
 
         // AnimGraph's coroutine calls ApplyAnimationSpeed during Update and can
         // re-enable the local Playable speed after Fusion's Render callback. Sample
         // once more in LateUpdate so the final rendered pose always uses the Host's
         // interpolated action time rather than the owning client's frame clock.
+        // Preserve the same transition-out decision made in Render(). Previously
+        // this LateUpdate sample used transitionBack=false (the default), which
+        // restored the action mixer to full weight after Render had already begun
+        // blending it out. The owning client therefore held the final parkour pose
+        // and then snapped into Locomotion/Idle, while the Host stayed smooth.
         animGraph.SetNetworkPresentationNormalizedTime(renderedGraphNormalizedTime,
-            proxyGraphTransitionIn, proxyGraphTransitionOut);
+            proxyGraphTransitionIn, proxyGraphTransitionOut,
+            transitionBack: proxyGraphReleasePending);
     }
 
     [Rpc(RpcSources.StateAuthority, RpcTargets.All, Channel = RpcChannel.Reliable)]
@@ -640,59 +899,60 @@ public class FSNetworkParkourAnimationSync : NetworkBehaviour
                 // once more and the owner visibly bends or starts the action twice.
                 ownerMecanimCueSequence = sequence;
                 ownerMecanimCueName = null;
+                ownerMecanimCueTransitionIn = 0f;
+                ownerMecanimCueUsesFixedTransition = false;
+                ownerMecanimCueWaitingForAnimatorSnapshot = false;
+                ownerMecanimCueBaselineBaseStateSequence = int.MinValue;
                 forceOwnerBaseStateAfterCue = graphWasPlaying;
                 ownerAwaitingMecanimPostClearState = mecAnimWasPlaying
                     && ownerMecanimActionStateHash != 0;
                 ownerMecanimActionActive = false;
                 ownerMecanimActionName = null;
             }
-            proxyGraphActionSequence = -1;
             // The State Authority is the source of truth for an action's lifetime.
             // Previously this clear was ignored, so an AnimGraph coroutine which
             // failed to finish locally could leave the owning client permanently
             // frozen in a Step Up/Vault/Landing pose while every other peer already
             // saw Locomotion. Request the graph's normal transition-out and keep a
             // bounded recovery in case the third-party coroutine does not finish.
-            BeginProxyGraphRelease();
+            BeginProxyGraphRelease(sequence);
             return;
         }
 
         // NetworkMecanimAnimator owns true proxies, but Fusion does not classify the
-        // owning Input Authority object as a proxy. Start the state immediately on
-        // that one presentation only; the render-buffer snapshot takes over once it
-        // reaches the same reliable cue sequence.
+        // owning Input Authority object as a proxy. The reliable RPC is deliberately
+        // only a sequence fence for that owner: its interpolated snapshot starts the
+        // state at the correct phase together with the rendered NetworkTransform.
         if (!usesAnimGraph)
         {
-            proxyGraphActionSequence = -1;
-            BeginProxyGraphRelease();
+            bool graphWasPlaying = proxyGraphActionPlaying;
 
             if (!HasInputAuthority)
             {
+                if (graphWasPlaying)
+                    ResetProxyGraphPresentation("true proxy Animator handoff");
                 LogDiagnostic($"SKIP Animator state '{actionName}'; NetworkMecanimAnimator owns true proxy");
                 return;
             }
 
-            bool applied = animGraph != null
-                && animGraph.PlayNetworkAnimatorState(actionName, 0f,
-                    Mathf.Max(0f, transitionIn), usesFixedTransition);
-            if (!applied && animator != null)
-            {
-                if (transitionIn <= Mathf.Epsilon)
-                    animator.Play(actionName, 0, 0f);
-                else if (usesFixedTransition)
-                    animator.CrossFadeInFixedTime(actionName, transitionIn, 0, 0f);
-                else
-                    animator.CrossFade(actionName, transitionIn, 0, 0f);
-            }
-
             ownerMecanimCueSequence = sequence;
             ownerMecanimCueName = actionName;
+            ownerMecanimCueTransitionIn = Mathf.Max(0f, transitionIn);
+            ownerMecanimCueUsesFixedTransition = usesFixedTransition;
+            ownerMecanimCueWaitingForAnimatorSnapshot = false;
+            ownerMecanimCueBaselineBaseStateSequence = int.MinValue;
             forceOwnerBaseStateAfterCue = false;
             ownerMecanimActionActive = true;
             ownerMecanimActionName = actionName;
             ownerMecanimActionStateHash = 0;
             ownerAwaitingMecanimPostClearState = false;
-            LogDiagnostic($"PLAY owner Mecanim state '{actionName}' seq={sequence} transition={transitionIn:0.###}");
+            LogDiagnostic($"QUEUE owner Mecanim state '{actionName}' seq={sequence} until matching render snapshot");
+
+            // Keep the previous AnimGraph pose connected until the same sequence is
+            // visible in the render buffer. ApplyOwnerBaseState then starts the
+            // controller underneath it before Render begins the smooth graph release.
+            if (graphWasPlaying)
+                BeginProxyGraphRelease(sequence);
             return;
         }
 
@@ -703,7 +963,8 @@ public class FSNetworkParkourAnimationSync : NetworkBehaviour
         }
 
         CancelProxyGraphRecovery();
-        StopProxyGraphAction();
+        CancelProxyGraphRelease();
+        PrepareProxyGraphReplacement();
 
         if (usesAnimGraph)
         {
@@ -928,12 +1189,120 @@ public class FSNetworkParkourAnimationSync : NetworkBehaviour
         }
     }
 
-    private void BeginProxyGraphRelease()
+    private void BeginProxyGraphRelease(int clearSequence)
     {
         if (!proxyGraphActionPlaying || animGraph == null)
             return;
 
-        ResetProxyGraphPresentation("authoritative clear");
+        // Reliable RPCs arrive before Fusion's interpolated render buffer. Keep the
+        // final action pose connected until the matching clear snapshot is visible;
+        // then the underlying Animator Controller already contains the authoritative
+        // Locomotion/Idle state and can receive a real crossfade instead of a cut.
+        proxyGraphReleasePending = true;
+        proxyGraphReleaseSequence = clearSequence;
+    }
+
+    private void StartProxyGraphBlendOut()
+    {
+        if (!proxyGraphActionPlaying || proxyGraphReleaseInProgress || animGraph == null)
+            return;
+
+        proxyGraphReleasePending = false;
+        proxyGraphReleaseInProgress = true;
+        hasRenderedGraphTime = false;
+
+        float duration = proxyGraphTransitionOut > 0.001f
+            ? proxyGraphTransitionOut
+            : 0.12f;
+        duration = Mathf.Clamp(duration, 0.1f, 0.22f);
+
+        int generation = proxyGraphGeneration;
+        proxyGraphReleaseCoroutine = StartCoroutine(
+            BlendOutProxyGraph(generation, duration));
+    }
+
+    private IEnumerator BlendOutProxyGraph(int generation, float duration)
+    {
+        float startWeight = 1f;
+        if (!animGraph.TryGetNetworkPresentationWeight(out startWeight))
+        {
+            proxyGraphReleaseCoroutine = null;
+            CompleteProxyGraphRelease("release mixer unavailable");
+            yield break;
+        }
+
+        float elapsed = 0f;
+        while (generation == proxyGraphGeneration && proxyGraphActionPlaying
+            && elapsed < duration)
+        {
+            elapsed += Time.unscaledDeltaTime;
+            float t = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(elapsed / duration));
+            if (!animGraph.SetNetworkPresentationWeight(Mathf.Lerp(startWeight, 0f, t)))
+                break;
+            yield return null;
+        }
+
+        if (generation != proxyGraphGeneration)
+            yield break;
+
+        animGraph.SetNetworkPresentationWeight(0f);
+        proxyGraphReleaseCoroutine = null;
+        CompleteProxyGraphRelease("smooth authoritative release");
+    }
+
+    private void PrepareProxyGraphReplacement()
+    {
+        if (!proxyGraphActionPlaying)
+            return;
+
+        // Stop only the coroutine which advances the old clip. Its mixer stays in
+        // the graph and becomes input zero of the next action mixer, giving the new
+        // action a real source pose to crossfade from.
+        proxyGraphGeneration++;
+        if (proxyGraphCoroutine != null)
+        {
+            StopCoroutine(proxyGraphCoroutine);
+            proxyGraphCoroutine = null;
+        }
+
+        proxyGraphActionPlaying = false;
+        proxyGraphActionSequence = -1;
+        proxyGraphReleasePending = false;
+        proxyGraphReleaseInProgress = false;
+        proxyGraphReleaseSequence = -1;
+        hasRenderedGraphTime = false;
+        LogDiagnostic($"PRESERVE AnimGraph pose for replacement generation={proxyGraphGeneration}");
+    }
+
+    private void CompleteProxyGraphRelease(string reason)
+    {
+        CancelProxyGraphRecovery();
+        proxyGraphGeneration++;
+
+        if (proxyGraphCoroutine != null)
+        {
+            StopCoroutine(proxyGraphCoroutine);
+            proxyGraphCoroutine = null;
+        }
+
+        proxyGraphActionPlaying = false;
+        proxyGraphActionSequence = -1;
+        proxyGraphReleasePending = false;
+        proxyGraphReleaseInProgress = false;
+        proxyGraphReleaseSequence = -1;
+        hasRenderedGraphTime = false;
+        LogDiagnostic($"RELEASE AnimGraph reason='{reason}' generation={proxyGraphGeneration}");
+
+        // Keep AnimatorControllerPlayable alive. It may already be blending into
+        // BracedHangClimb/Climb Up beneath the action clip. Recreating it here was
+        // the remaining client-only hard transition.
+        if (animGraph == null || !animGraph.ReleaseNetworkPresentationToAnimatorBase())
+        {
+            lastAppliedOwnerBaseStateHash = 0;
+            lastAppliedOwnerBaseStateSequence = -1;
+            if (animGraph != null)
+                animGraph.ResetAnimationGraph();
+        }
     }
 
     private IEnumerator RecoverProxyGraphIfStuck(int generation)
@@ -980,17 +1349,10 @@ public class FSNetworkParkourAnimationSync : NetworkBehaviour
         proxyGraphRecoveryCoroutine = null;
     }
 
-    private void StopProxyGraphAction()
-    {
-        if (!proxyGraphActionPlaying)
-            return;
-
-        ResetProxyGraphPresentation("replacement action");
-    }
-
     private void ResetProxyGraphPresentation(string reason)
     {
         CancelProxyGraphRecovery();
+        CancelProxyGraphRelease();
         proxyGraphGeneration++;
         LogDiagnostic($"RESET AnimGraph reason='{reason}' generation={proxyGraphGeneration}");
 
@@ -1002,15 +1364,34 @@ public class FSNetworkParkourAnimationSync : NetworkBehaviour
 
         proxyGraphActionPlaying = false;
         proxyGraphActionSequence = -1;
+        proxyGraphReleasePending = false;
+        proxyGraphReleaseInProgress = false;
+        proxyGraphReleaseSequence = -1;
         hasRenderedGraphTime = false;
+        lastAppliedOwnerBaseStateHash = 0;
+        lastAppliedOwnerBaseStateSequence = -1;
 
         if (animGraph != null)
             animGraph.ResetAnimationGraph();
     }
 
+    private void CancelProxyGraphRelease()
+    {
+        if (proxyGraphReleaseCoroutine != null)
+        {
+            StopCoroutine(proxyGraphReleaseCoroutine);
+            proxyGraphReleaseCoroutine = null;
+        }
+
+        proxyGraphReleasePending = false;
+        proxyGraphReleaseInProgress = false;
+        proxyGraphReleaseSequence = -1;
+    }
+
     private void OnDestroy()
     {
         CancelProxyGraphRecovery();
+        CancelProxyGraphRelease();
 
         if (actionExecutor != null)
         {

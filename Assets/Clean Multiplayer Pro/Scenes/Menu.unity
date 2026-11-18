@@ -5527,6 +5527,7 @@ MonoBehaviour:
   refreshInterval: 1
   UseCustomLocation: 0
   CustomLocation: {x: -15.600871, y: 1.0049998, z: -42.05505}
+  logInputDiagnostics: 0
   loadingScreenScript: {fileID: 2371258590935768603}
   popup: {fileID: 2093478885}
   menuCanvas: {fileID: 8046102912774687602}

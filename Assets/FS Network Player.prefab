@@ -2319,7 +2319,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 52fa576433854051a48e2e6c0ba7874e, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  logDiagnostics: 0
+  logDiagnostics: 1
 --- !u!1 &1953128215061339965
 GameObject:
   m_ObjectHideFlags: 0
@@ -6242,6 +6242,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e31e16cb0b7ddee4ba38f836ab396146, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::FSNetworkAuthoritySetup
+  logDiagnostics: 1
   playerController: {fileID: 4564066652557789433}
   inputManager: {fileID: 7489804118320863}
   parkourInputManager: {fileID: 2662609449334359316}

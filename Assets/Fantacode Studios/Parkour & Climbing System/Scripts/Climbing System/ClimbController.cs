@@ -760,45 +760,53 @@ namespace FS_ParkourSystem
 
         bool IClimbBridge.HandlePredictiveClimbLanding(ClimbPoint point, float comboTime, float peakTime)
         {
-            if (climbCore.currentPoint.transform.parent.CompareTag("SwingableLedge") && comboTime >= peakTime)
+            if (!point.transform.parent.CompareTag("SwingableLedge"))
+                return false;
+
+            if (HangType == HangType.freeHang)
             {
-                var cam = System.Linq.Enumerable.First(Camera.allCameras, c => c.enabled).transform;
-                var dir = (transform.position - cam.position).normalized;
-                if (envScanner.alwaysUsePlayerForward) dir = transform.forward;
-                dir.y = 0f;
-                var angleBWvec = Vector3.SignedAngle(transform.forward, new Vector3(dir.x, 0, dir.z), Vector3.down);
-
-                if (Mathf.Abs(angleBWvec) > 130 || Mathf.Abs(angleBWvec) < 60)
-                {
-                    if ((doCombo && player.MoveDir != Vector3.zero) || doQuickCombo)
-                    {
-                        var moveDir = ((locomotionInputManager.DirectionInput.x * cam.right) + (locomotionInputManager.DirectionInput.y * cam.forward)).normalized;
-                        dir = doQuickCombo ? dir : moveDir;
-
-                        var jumpData = envScanner.FindPointToJump(dir, 4.5f, 1f, false);
-                        if (jumpData != null)
-                        {
-                            if (jumpData.isClimbable && (!jumpData.jumpPointFound || (jumpData.jumpPointFound && jumpData.climbHitData.point.y > jumpData.rootPosition.y)))
-                            {
-                                if (jumpData.climbHitData.point.y - transform.position.y < 2f)
-                                {
-                                    if (ClimbToLedge(jumpData.climbHitData.transform, jumpData.climbHitData.point, combo: true))
-                                        return true;
-                                }
-                            }
-                            if (jumpData.jumpPointFound)
-                            {
-                                StartCoroutine(parkourCore.DoPredictiveBackJump(jumpData, combo: true, climbCore: climbCore, climbBridge: this));
-                                return true;
-                            }
-                        }
-                    }
-                }
+                if (inputManager.JumpFromHang)
+                    doCombo = true;
+                else if (locomotionInputManager.JumpHold)
+                    doQuickCombo = true;
             }
-            else if (inputManager.JumpFromHang && HangType == HangType.freeHang) doCombo = true;
-            else if (locomotionInputManager.JumpHold && HangType == HangType.freeHang) doQuickCombo = true;
 
-            return false;
+            var moveInput = locomotionInputManager.DirectionInput;
+            if (comboTime < peakTime || (!doQuickCombo && (!doCombo || moveInput == Vector2.zero)))
+                return false;
+
+            var cam = playerController.cameraGameObject.transform;
+            // The remote camera rig is inactive on State Authority. Fusion supplies
+            // its rotation, while its position is only updated on Input Authority.
+            var viewDir = inputManager.useExternalInput ? cam.forward : transform.position - cam.position;
+            if (envScanner.alwaysUsePlayerForward)
+                viewDir = transform.forward;
+            viewDir.y = 0f;
+
+            float viewAngle = Mathf.Abs(Vector3.SignedAngle(transform.forward, viewDir, Vector3.down));
+            if (viewAngle >= 60f && viewAngle <= 130f)
+                return false;
+
+            var jumpDir = doQuickCombo ? viewDir : moveInput.x * cam.right + moveInput.y * cam.forward;
+            if (envScanner.alwaysUsePlayerForward)
+                jumpDir = transform.forward;
+            jumpDir.Normalize();
+
+            var jumpData = envScanner.FindPointToJump(jumpDir, 4.5f, 1f, false);
+            if (jumpData == null)
+                return false;
+
+            if (jumpData.isClimbable
+                && (!jumpData.jumpPointFound || jumpData.climbHitData.point.y > jumpData.rootPosition.y)
+                && jumpData.climbHitData.point.y - transform.position.y < 2f
+                && ClimbToLedge(jumpData.climbHitData.transform, jumpData.climbHitData.point, combo: true, checkDirection: jumpDir))
+                return true;
+
+            if (!jumpData.jumpPointFound)
+                return false;
+
+            StartCoroutine(parkourCore.DoPredictiveBackJump(jumpData, combo: true, climbCore: climbCore, climbBridge: this));
+            return true;
         }
 
         void IClimbBridge.OnBackJumpComplete(bool noChain)
