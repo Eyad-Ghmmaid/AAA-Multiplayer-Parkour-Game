@@ -2,7 +2,7 @@ using AvocadoShark;
 using Fusion;
 using UnityEngine;
 
-/// <summary>Map-specific fall volume that sends a locally owned player to their last checkpoint.</summary>
+/// <summary>Map-specific fall volume that sends the player who entered it to a respawn point.</summary>
 [RequireComponent(typeof(BoxCollider))]
 public sealed class RaceRespawnTrigger : MonoBehaviour
 {
@@ -25,7 +25,12 @@ public sealed class RaceRespawnTrigger : MonoBehaviour
             return;
 
         var raceManager = FindAnyObjectByType<InGame_Manager>();
-        if (raceManager != null)
+        if (raceManager == null)
+            return;
+
+        if (raceManager.IsHostAuthoritativeSession)
+            raceManager.RequestAuthoritativeRespawn(player);
+        else
             raceManager.RequestLocalRespawn();
     }
 }

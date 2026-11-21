@@ -33,7 +33,6 @@ namespace AvocadoShark
 
         [SerializeField] private InputActionAsset inputActionAsset;
         private bool _sceneSwitchInProgress;
-        private bool _leavingRoom;
 
         private const int RaceWaiting = 0;
         private const int RaceCountdown = 1;
@@ -425,7 +424,7 @@ namespace AvocadoShark
                 if (parkourInput != null)
                     parkourInput.RaceInputLocked = true;
 
-                _localRaceCountdownLock = true;
+                _localRaceCountdownLock = !IsHostAuthoritativeSession || RacePhase == RaceCountdown;
                 _localTeleportInputLockUntil = Runner.SimulationTime + 0.2d;
             }
 
@@ -463,11 +462,11 @@ namespace AvocadoShark
             Debug.Log($"[Race Teleport] target={target} object={networkPlayer.Id} stateAuthority={networkPlayer.HasStateAuthority} floor={floorPosition} root={networkPlayer.transform.position} player={playerTransform.position} capsuleBottomY={characterController.bounds.min.y}", networkPlayer);
         }
 
-        /// <summary>Called by a locally owned player after entering a map checkpoint trigger.</summary>
+        /// <summary>Reports a locally owned player's checkpoint in Shared Mode.</summary>
         public void ReportCheckpoint(int checkpointIndex)
         {
-            if (Object == null || Runner == null || Runner.IsShutdown || RacePhase != RaceRunning ||
-                !IsLocalRaceParticipant || checkpointIndex < 1)
+            if (Object == null || Runner == null || Runner.IsShutdown || Runner.GameMode != GameMode.Shared ||
+                RacePhase != RaceRunning || !IsLocalRaceParticipant || checkpointIndex < 1)
                 return;
 
             ReportCheckpointRpc(checkpointIndex);
@@ -476,25 +475,8 @@ namespace AvocadoShark
         [Rpc(RpcSources.All, RpcTargets.StateAuthority)]
         private void ReportCheckpointRpc(int checkpointIndex, RpcInfo info = default)
         {
-            RecordCheckpoint(info.Source, checkpointIndex);
-        }
-
-        /// <summary>Records a checkpoint hit observed by the Host's authoritative physics scene.</summary>
-        public void ReportAuthoritativeCheckpoint(NetworkObject playerObject, int checkpointIndex)
-        {
-            if (!IsHostAuthoritativeSession || !HasStateAuthority || playerObject == null || !playerObject.HasStateAuthority)
-                return;
-
-            RecordCheckpoint(playerObject.InputAuthority, checkpointIndex);
-        }
-
-        private void RecordCheckpoint(PlayerRef player, int checkpointIndex)
-        {
-            if (RacePhase != RaceRunning || player == PlayerRef.None || !IsRaceParticipant(player))
-                return;
-
-            var previousIndex = CheckpointProgress.TryGet(player, out var savedIndex) ? savedIndex : 0;
-            if (checkpointIndex != previousIndex + 1)
+            var player = info.Source;
+            if (Runner.GameMode != GameMode.Shared || !IsNextCheckpoint(player, checkpointIndex))
                 return;
 
             RaceCheckpoint reachedCheckpoint = null;
@@ -525,10 +507,47 @@ namespace AvocadoShark
             CheckpointProgress.Set(player, checkpointIndex);
         }
 
-        /// <summary>Requests a respawn at the player's latest checkpoint, or at the race start.</summary>
+        /// <summary>Records a checkpoint overlap already confirmed by the Host's physics scene.</summary>
+        public void ReportAuthoritativeCheckpoint(NetworkObject playerObject, int checkpointIndex)
+        {
+            if (Object == null || !Object.IsValid || !IsHostAuthoritativeSession || !HasStateAuthority ||
+                playerObject == null || !playerObject.HasStateAuthority)
+                return;
+
+            var player = playerObject.InputAuthority;
+            if (IsNextCheckpoint(player, checkpointIndex) && Runner.GetPlayerObject(player) == playerObject)
+                CheckpointProgress.Set(player, checkpointIndex);
+        }
+
+        private bool IsNextCheckpoint(PlayerRef player, int checkpointIndex)
+        {
+            if (RacePhase != RaceRunning || player == PlayerRef.None || !IsRaceParticipant(player))
+                return false;
+
+            var previousIndex = CheckpointProgress.TryGet(player, out var savedIndex) ? savedIndex : 0;
+            return checkpointIndex == previousIndex + 1;
+        }
+
+        /// <summary>Queues a respawn for the player observed in a fall volume by the Host.</summary>
+        public void RequestAuthoritativeRespawn(NetworkObject playerObject)
+        {
+            if (Object == null || !Object.IsValid || !IsHostAuthoritativeSession || !HasStateAuthority ||
+                playerObject == null || !playerObject.HasStateAuthority || RacePhase == RaceCountdown)
+                return;
+
+            var target = playerObject.InputAuthority;
+            if (target == PlayerRef.None || Runner.GetPlayerObject(target) != playerObject ||
+                _pendingHostTeleports.Exists(pending => pending.Target == target))
+                return;
+
+            RespawnPlayer(target);
+        }
+
+        /// <summary>Requests a respawn for the locally owned player in Shared Mode.</summary>
         public void RequestLocalRespawn()
         {
-            if (Object == null || Runner == null || Runner.IsShutdown || RacePhase != RaceRunning ||
+            if (Object == null || Runner == null || Runner.GameMode != GameMode.Shared ||
+                Runner.IsShutdown || RacePhase != RaceRunning ||
                 !IsLocalRaceParticipant)
                 return;
 
@@ -538,54 +557,35 @@ namespace AvocadoShark
         [Rpc(RpcSources.All, RpcTargets.StateAuthority)]
         private void RequestLocalRespawnRpc(RpcInfo info = default)
         {
-            if (RacePhase != RaceRunning || info.Source == PlayerRef.None || !IsRaceParticipant(info.Source))
+            if (Runner.GameMode != GameMode.Shared || RacePhase != RaceRunning ||
+                info.Source == PlayerRef.None || !IsRaceParticipant(info.Source))
                 return;
 
-            var savedIndex = CheckpointProgress.TryGet(info.Source, out var value) ? value : 0;
-            var startPoint = FindAnyObjectByType<RaceStartPoint>();
-            Vector3 floorPosition;
-            Quaternion rotation;
+            RespawnPlayer(info.Source);
+        }
 
-            if (savedIndex > 0)
+        private void RespawnPlayer(PlayerRef target)
+        {
+            if (CheckpointProgress.TryGet(target, out var savedIndex) && savedIndex > 0)
             {
-                RaceCheckpoint savedCheckpoint = null;
                 foreach (var checkpoint in FindObjectsByType<RaceCheckpoint>(FindObjectsSortMode.None))
                 {
                     if (checkpoint.CheckpointIndex == savedIndex)
                     {
-                        savedCheckpoint = checkpoint;
-                        break;
+                        TeleportPlayerRpc(target, checkpoint.RespawnPosition, checkpoint.transform.rotation);
+                        return;
                     }
                 }
+            }
 
-                if (savedCheckpoint != null)
-                {
-                    floorPosition = savedCheckpoint.RespawnPosition;
-                    rotation = savedCheckpoint.transform.rotation;
-                }
-                else if (startPoint != null)
-                {
-                    floorPosition = startPoint.FloorPosition;
-                    rotation = startPoint.transform.rotation;
-                }
-                else
-                {
-                    Debug.LogError("Respawn requested, but the map has no valid checkpoint or RaceStartPoint.", this);
-                    return;
-                }
-            }
-            else if (startPoint != null)
+            var startPoint = FindAnyObjectByType<RaceStartPoint>();
+            if (startPoint == null)
             {
-                floorPosition = startPoint.FloorPosition;
-                rotation = startPoint.transform.rotation;
-            }
-            else
-            {
-                Debug.LogError("Respawn requested, but the map has no RaceStartPoint.", this);
+                Debug.LogWarning("Respawn requested, but the map has no RaceStartPoint.", this);
                 return;
             }
 
-            TeleportPlayerRpc(info.Source, floorPosition, rotation);
+            TeleportPlayerRpc(target, startPoint.FloorPosition, startPoint.transform.rotation);
         }
 
         /// <summary>Stops this client's timer when its owner enters the map's finish trigger.</summary>
@@ -743,32 +743,14 @@ namespace AvocadoShark
 
             return $"Spieler {player.PlayerId + 1}";
         }
-        public async void LeaveRoom()
+        public void LeaveRoom()
         {
-            if (_leavingRoom)
-                return;
-
-            _leavingRoom = true;
-            var activeRunner = runner != null ? runner : Runner;
-            try
-            {
-                if (activeRunner != null && !activeRunner.IsShutdown)
-                    await activeRunner.Shutdown();
-            }
-            catch (System.Exception exception)
-            {
-                Debug.LogException(exception, this);
-            }
-            finally
-            {
-                SceneManager.LoadScene("Menu");
-            }
-
+            FusionConnection.ReturnToMenu(runner != null ? runner : Runner);
         }
         private float smoothedRTT = 0.0f;
         private void LateUpdate()
         { 
-            if(!Object)
+            if (Object == null || !Object.IsValid || runner == null || !runner.IsRunning)
                 return;
             room_name.text = Runner.SessionInfo.Name;
             players.text = Runner.SessionInfo.PlayerCount + "/" + Runner.SessionInfo.MaxPlayers;
@@ -846,7 +828,8 @@ namespace AvocadoShark
 
         public void PauseGame()
         {
-            if (FusionConnection.Instance.TryGetLocalPlayerComponent(out StarterAssetsInputs starterAssetsInputs))
+            if (FusionConnection.Instance != null &&
+                FusionConnection.Instance.TryGetLocalPlayerComponent(out StarterAssetsInputs starterAssetsInputs))
             {
                 starterAssetsInputs.DisablePlayerInput();
             }
@@ -858,7 +841,8 @@ namespace AvocadoShark
         {
             pauseMenu.SetActive(false);
             //inputActionAsset.Enable();
-            if (FusionConnection.Instance.TryGetLocalPlayerComponent(out StarterAssetsInputs starterAssetsInputs))
+            if (FusionConnection.Instance != null &&
+                FusionConnection.Instance.TryGetLocalPlayerComponent(out StarterAssetsInputs starterAssetsInputs))
             {
                 starterAssetsInputs.EnablePlayerInput();
             }

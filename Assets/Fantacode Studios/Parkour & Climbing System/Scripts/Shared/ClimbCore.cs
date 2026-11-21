@@ -63,6 +63,62 @@ namespace FS_ParkourSystem
         public float AppliedRightHandIKWeight { get; private set; }
         public float AppliedLeftHandIKWeight { get; private set; }
 
+        public enum FreeHangPose
+        {
+            None,
+            Hanging,
+            Mounting
+        }
+
+        private static readonly HumanBodyBones[] WallClearanceBones =
+        {
+            HumanBodyBones.Hips, HumanBodyBones.Chest, HumanBodyBones.Head,
+            HumanBodyBones.LeftFoot, HumanBodyBones.RightFoot
+        };
+
+        public FreeHangPose GetFreeHangPose()
+        {
+            if (actionExecutor?.CurrentAction?.animName == "FreeHangClimb")
+                return FreeHangPose.Mounting;
+
+            return parkourCore != null && parkourCore.IsHanging && currentPoint != null &&
+                animator != null && animator.GetFloat(AnimatorParameters.freeHang) >= 0.5f
+                ? FreeHangPose.Hanging
+                : FreeHangPose.None;
+        }
+
+        public static void ApplyFreeHangWallClearance(Animator animator, FreeHangPose pose)
+        {
+            if (pose == FreeHangPose.None || animator == null || !animator.isHuman || FSSettings.i == null)
+                return;
+
+            Vector3 forward = Vector3.ProjectOnPlane(animator.transform.forward, Vector3.up).normalized;
+            const float probeOffset = 0.85f;
+            float correction = 0f;
+            // Once the torso clears the lip of a mount, let the legs follow it
+            // onto the ledge without pushing the body back out from the platform.
+            int boneCount = pose == FreeHangPose.Mounting ? 3 : WallClearanceBones.Length;
+            for (int i = 0; i < boneCount; i++)
+            {
+                var bone = animator.GetBoneTransform(WallClearanceBones[i]);
+                if (bone == null)
+                    continue;
+
+                float clearance = i < 3 ? 0.13f : 0.075f;
+                if (Physics.Raycast(bone.position - forward * probeOffset, forward, out var hit,
+                    probeOffset + 2f * clearance, FSSettings.i.ObstacleLayer, QueryTriggerInteraction.Ignore)
+                    && Mathf.Abs(hit.normal.y) < 0.4f)
+                {
+                    float alignment = Vector3.Dot(hit.normal, -forward);
+                    if (alignment > 0.5f)
+                        correction = Mathf.Max(correction, probeOffset - hit.distance + clearance / alignment);
+                }
+            }
+
+            if (correction > 0f)
+                animator.bodyPosition -= forward * Mathf.Min(correction, 0.4f);
+        }
+
         // --- IK state ---
         AnimatorHelper animatorHelper = new AnimatorHelper();
         Vector3 lookAtPosition;

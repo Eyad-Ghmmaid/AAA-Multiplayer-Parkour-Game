@@ -4,6 +4,7 @@ using Fusion;
 using Fusion.Sockets;
 using System.Collections.Generic;
 using System;
+using System.Threading.Tasks;
 using UnityEngine.UI;
 using TMPro;
 using System.Collections;
@@ -34,6 +35,8 @@ namespace AvocadoShark
         public Action OnDestroyRoomEntries;
 
         public static FusionConnection Instance;
+        private static bool _returningToMenu;
+        private static readonly TimeSpan RoomShutdownTimeout = TimeSpan.FromSeconds(5);
 
         [SerializeField] private NetworkRunner runnerPrefab;
         public NetworkRunner Runner { get; private set; }
@@ -85,6 +88,7 @@ namespace AvocadoShark
         private List<SessionInfo> _sessionList = new List<SessionInfo>();
         private List<RoomEntry> _roomEntryList = new List<RoomEntry>();
         private bool _initialEnvironmentLoadStarted;
+        private bool _clientGameSceneLoadStarted;
 
         [HideInInspector] public bool isConnected = false;
         [HideInInspector] public string _playerName = null;
@@ -241,7 +245,9 @@ namespace AvocadoShark
 
         public bool TryGetLocalPlayerComponent<T>(out T component)
         {
-            var localPlayer = Runner.GetPlayerObject(Runner.LocalPlayer);
+            var localPlayer = Runner != null && Runner.IsRunning
+                ? Runner.GetPlayerObject(Runner.LocalPlayer)
+                : null;
             if (localPlayer == null)
             {
                 component = default;
@@ -452,7 +458,8 @@ namespace AvocadoShark
                 return;
 
             await ShutdownFailedRunner(Runner);
-            popup.ShowPopup(result.ShutdownReason.ToString());
+            if (this != null && !_returningToMenu)
+                popup.ShowPopup(result.ShutdownReason.ToString());
         }
 
         public async void JoinRoom(string sessionName, int maxPlayers, string password = null)
@@ -504,7 +511,7 @@ namespace AvocadoShark
             popup.ShowPopup(result.ShutdownReason.ToString());
         }
 
-        private async System.Threading.Tasks.Task ShutdownFailedRunner(NetworkRunner failedRunner)
+        private async Task ShutdownFailedRunner(NetworkRunner failedRunner)
         {
             try
             {
@@ -519,6 +526,53 @@ namespace AvocadoShark
             {
                 if (Runner == failedRunner)
                     Runner = null;
+            }
+        }
+
+        internal static async void ReturnToMenu(NetworkRunner runner)
+        {
+            if (_returningToMenu)
+                return;
+
+            _returningToMenu = true;
+            try
+            {
+                // Fusion may invoke this from inside its own disconnect or shutdown callback.
+                await Task.Yield();
+
+                var shutdown = ShutdownRoomRunner(runner);
+                if (!shutdown.IsCompleted && await Task.WhenAny(shutdown, Task.Delay(RoomShutdownTimeout)) != shutdown)
+                {
+                    Debug.LogWarning("Fusion room shutdown timed out. Returning to the menu.");
+                    if (runner != null)
+                        Destroy(runner.gameObject);
+                }
+
+                Time.timeScale = 1f;
+                await SceneManager.LoadSceneAsync("Menu", LoadSceneMode.Single);
+                Cursor.lockState = CursorLockMode.None;
+                Cursor.visible = true;
+            }
+            finally
+            {
+                _returningToMenu = false;
+            }
+        }
+
+        private static async Task ShutdownRoomRunner(NetworkRunner runner)
+        {
+            if (runner == null || runner.IsShutdown)
+                return;
+
+            try
+            {
+                await runner.Shutdown();
+            }
+            catch (Exception exception)
+            {
+                Debug.LogWarning($"Fusion room shutdown failed: {exception.Message}");
+                if (runner != null)
+                    Destroy(runner.gameObject);
             }
         }
 
@@ -638,7 +692,12 @@ namespace AvocadoShark
 
         public void OnDisconnectedFromServer(NetworkRunner runner, NetDisconnectReason reason)
         {
+            if (runner != Runner)
+                return;
+
             isConnected = false;
+            if (_clientGameSceneLoadStarted)
+                ReturnToMenu(runner);
         }
 
         public void OnConnectFailed(NetworkRunner runner, NetAddress remoteAddress, NetConnectFailedReason reason)
@@ -657,6 +716,8 @@ namespace AvocadoShark
 
         public void OnHostMigration(NetworkRunner runner, HostMigrationToken hostMigrationToken)
         {
+            if (runner == Runner && _clientGameSceneLoadStarted)
+                ReturnToMenu(runner);
         }
 
         // Fusion 2.0 signature. Kept alongside the 2.1 overload below so the same
@@ -786,6 +847,9 @@ namespace AvocadoShark
         }
         public void OnSceneLoadDone(NetworkRunner runner)
         {
+            if (runner != Runner || _returningToMenu)
+                return;
+
             if (Instance != null && Instance != this)
             {
                 Destroy(gameObject);
@@ -821,6 +885,9 @@ namespace AvocadoShark
                     var loadOperation = runner.LoadScene(SceneRef.FromIndex(environment1BuildIndex), LoadSceneMode.Additive);
                     loadOperation.AddOnCompleted(_ =>
                     {
+                        if (this == null || runner != Runner || _returningToMenu)
+                            return;
+
                         var loadedEnvironment = SceneManager.GetSceneByBuildIndex(environment1BuildIndex);
                         if (!loadedEnvironment.IsValid() || !loadedEnvironment.isLoaded)
                         {
@@ -846,18 +913,26 @@ namespace AvocadoShark
 
         public void OnSceneLoadStart(NetworkRunner runner)
         {
+            if (runner == Runner && runner.GameMode == GameMode.Client)
+                _clientGameSceneLoadStarted = true;
         }
 
         public void OnShutdown(NetworkRunner runner, ShutdownReason shutdownReason)
         {
-            if (Runner == runner)
-                Runner = null;
+            if (runner != Runner)
+                return;
 
+            bool clientWasInRoom = _clientGameSceneLoadStarted;
+            Runner = null;
             isConnected = false;
             hasEnteredGameScene = false;
+            _clientGameSceneLoadStarted = false;
             _initialEnvironmentLoadStarted = false;
             playersInSession.Clear();
             _lastInputSample = default;
+
+            if (clientWasInRoom && shutdownReason != ShutdownReason.Ok)
+                ReturnToMenu(runner);
         }
 
         private static int FindBuildIndex(string sceneName)

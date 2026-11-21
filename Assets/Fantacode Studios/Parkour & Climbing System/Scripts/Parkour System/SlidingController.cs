@@ -50,6 +50,45 @@ namespace FC_ParkourSystem
         private Transform modelTransform;
         private bool slidingAnimActive;
 
+        private static readonly (HumanBodyBones Bone, float Clearance)[] SlideSurfaceSamples =
+        {
+            (HumanBodyBones.Hips, 0.12f),
+            (HumanBodyBones.Chest, 0.12f),
+            (HumanBodyBones.Head, 0.10f),
+            (HumanBodyBones.LeftLowerArm, 0.06f),
+            (HumanBodyBones.RightLowerArm, 0.06f),
+            (HumanBodyBones.LeftFoot, 0.06f),
+            (HumanBodyBones.RightFoot, 0.06f)
+        };
+
+        internal static void ApplySlideSurfaceClearance(Animator animator)
+        {
+            if (animator == null || !animator.isHuman || FSSettings.i == null)
+                return;
+
+            var pelvis = animator.GetBoneTransform(HumanBodyBones.Hips);
+            if (pelvis == null)
+                return;
+
+            const float probeHeight = 0.5f;
+            float lift = 0f;
+            foreach (var sample in SlideSurfaceSamples)
+            {
+                var bone = animator.GetBoneTransform(sample.Bone);
+                if (bone == null)
+                    continue;
+
+                if (Physics.Raycast(bone.position + Vector3.up * probeHeight, Vector3.down, out var hit,
+                    probeHeight + 0.3f, FSSettings.i.GroundLayer, QueryTriggerInteraction.Ignore)
+                    && hit.collider.CompareTag("Slide") && hit.normal.y > 0.25f)
+                    lift = Mathf.Max(lift, probeHeight - hit.distance + sample.Clearance / hit.normal.y);
+            }
+
+            // Offset the animated skeleton after evaluation, not the movement capsule.
+            if (lift > 0f)
+                pelvis.position += Vector3.up * Mathf.Min(lift, 0.35f);
+        }
+
         public AnimationClip SlidingClip => slidingClip;
         public AnimGraphClipInfo SlideJumpClipInfo => slideJumpClipInfo;
         public bool IsSlidingAnimationActive => slidingAnimActive;

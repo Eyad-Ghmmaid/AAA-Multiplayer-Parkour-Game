@@ -98,6 +98,32 @@ namespace FS_Core
                 playableAnimator.SetBool(parameterHash, value);
         }
 
+        public void SetNetworkAnimatorSpeed(float speed)
+        {
+            if (animator != null)
+                animator.speed = speed;
+            if (playableAnimator.IsValid())
+                playableAnimator.SetSpeed(speed);
+        }
+
+        public bool SyncNetworkClimbPhase(int stateHash, float normalizedTime)
+        {
+            if (!playableAnimator.IsValid() || stateHash == 0)
+                return false;
+
+            var state = playableAnimator.GetCurrentAnimatorStateInfo(0);
+            // Let the controller advance between samples, correcting only visible drift.
+            if (state.fullPathHash != stateHash ||
+                Mathf.Abs(Mathf.Clamp01(state.normalizedTime) - normalizedTime) > 0.04f)
+            {
+                playableAnimator.Play(stateHash, 0, normalizedTime);
+                if (animator != null)
+                    animator.Play(stateHash, 0, normalizedTime);
+            }
+
+            return true;
+        }
+
         /// <summary>
         /// Applies an authoritative Animator Controller state to the controller
         /// playable which actually feeds this graph's final output. Calling only
@@ -146,7 +172,7 @@ namespace FS_Core
         /// the string overload preserves the same lookup semantics as
         /// ActionExecutor.ExecuteAnimatorAction on the State Authority.
         /// </summary>
-        public bool PlayNetworkAnimatorState(string stateName, float normalizedTime,
+        public bool PlayNetworkAnimatorState(string stateName, float normalizedTime, float stateLength,
             float transitionDuration, bool useFixedTransition)
         {
             if (string.IsNullOrWhiteSpace(stateName))
@@ -161,7 +187,7 @@ namespace FS_Core
                 if (transitionDuration <= Mathf.Epsilon)
                     playableAnimator.Play(stateName, 0, normalizedTime);
                 else if (useFixedTransition)
-                    playableAnimator.CrossFadeInFixedTime(stateName, transitionDuration, 0, normalizedTime);
+                    playableAnimator.CrossFadeInFixedTime(stateName, transitionDuration, 0, normalizedTime * stateLength);
                 else
                     playableAnimator.CrossFade(stateName, transitionDuration, 0, normalizedTime);
 
@@ -173,7 +199,7 @@ namespace FS_Core
                 if (transitionDuration <= Mathf.Epsilon)
                     animator.Play(stateName, 0, normalizedTime);
                 else if (useFixedTransition)
-                    animator.CrossFadeInFixedTime(stateName, transitionDuration, 0, normalizedTime);
+                    animator.CrossFadeInFixedTime(stateName, transitionDuration, 0, normalizedTime * stateLength);
                 else
                     animator.CrossFade(stateName, transitionDuration, 0, normalizedTime);
             }
@@ -189,6 +215,7 @@ namespace FS_Core
         /// </summary>
         public bool PlayNetworkAnimatorTransition(int currentStateHash,
             float currentNormalizedTime, int nextStateHash, float nextNormalizedTime,
+            float nextStateLength,
             float transitionDuration, float normalizedTransitionTime,
             DurationUnit durationUnit)
         {
@@ -214,7 +241,7 @@ namespace FS_Core
                 if (fixedDuration)
                 {
                     playableAnimator.CrossFadeInFixedTime(nextStateHash,
-                        remainingTransitionDuration, 0, nextNormalizedTime);
+                        remainingTransitionDuration, 0, nextNormalizedTime * nextStateLength);
                 }
                 else
                 {
@@ -230,7 +257,7 @@ namespace FS_Core
                 if (fixedDuration)
                 {
                     animator.CrossFadeInFixedTime(nextStateHash, transitionDuration,
-                        0, nextNormalizedTime, normalizedTransitionTime);
+                        0, nextNormalizedTime * nextStateLength, normalizedTransitionTime);
                 }
                 else
                 {
