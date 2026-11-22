@@ -3778,8 +3778,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c8171064120cd8340bd3b1acb096fc24, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  environment1: 2
-  environment2: 3
   room_name: {fileID: 953358300}
   players: {fileID: 1851637992}
   lock_image: {fileID: 1464032329}

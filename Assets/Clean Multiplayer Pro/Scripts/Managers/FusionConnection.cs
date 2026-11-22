@@ -28,6 +28,7 @@ namespace AvocadoShark
         #region ThingsAddedByMe
 
         public List<PlayerRef> playersInSession = new List<PlayerRef>();
+        private readonly Dictionary<PlayerRef, int> _spawnSlots = new Dictionary<PlayerRef, int>();
 
         #endregion
 
@@ -87,8 +88,8 @@ namespace AvocadoShark
         private bool initialRoomListPopulated = false;
         private List<SessionInfo> _sessionList = new List<SessionInfo>();
         private List<RoomEntry> _roomEntryList = new List<RoomEntry>();
-        private bool _initialEnvironmentLoadStarted;
         private bool _clientGameSceneLoadStarted;
+        private bool _creatingRoom;
 
         [HideInInspector] public bool isConnected = false;
         [HideInInspector] public string _playerName = null;
@@ -139,6 +140,7 @@ namespace AvocadoShark
                 region = "us";
             }
             region_select.value = region_n;
+            menuCanvas?.ConfigureMapSelection(region_select);
             PhotonAppSettings settings = Resources.Load<PhotonAppSettings>("PhotonAppSettings");
             settings.AppSettings.FixedRegion = region;
         }
@@ -177,70 +179,52 @@ namespace AvocadoShark
         public void OnSearchTextValueChange(string value)
         {
             _roomEntryList.RemoveAll(e => e == null);
-            if (string.IsNullOrEmpty(value) || string.IsNullOrWhiteSpace(value))
-            {
-                foreach (var i in _roomEntryList)
-                {
-                    i.gameObject.SetActive(true);
-                }
-            }
-
-            foreach (var i in _roomEntryList)
-            {
-                if (value != null && i.roomName.text.Contains(value))
-                    i.gameObject.SetActive(true);
-                else
-                {
-                    i.gameObject.SetActive(false);
-                }
-            }
+            foreach (var entry in _roomEntryList)
+                entry.gameObject.SetActive(string.IsNullOrWhiteSpace(value) ||
+                    entry.SessionInfo.Name.IndexOf(value, StringComparison.OrdinalIgnoreCase) >= 0);
         }
 
         public void CreateRoom()
         {
-            PlayerPrefs.SetInt("has_pass", 0);
+            if (_creatingRoom)
+                return;
+
+            string mapPath = menuCanvas.GetSelectedMapPath();
+            int mapIndex = string.IsNullOrEmpty(mapPath) ? -1 : SceneUtility.GetBuildIndexByScenePath(mapPath);
+            int gameIndex = SceneUtility.GetBuildIndexByScenePath(RaceMapCatalog.GameScenePath);
+            if (mapIndex < 0 || gameIndex < 0)
+            {
+                popup.ShowPopup("Enable the Game scene and at least one map in the build profile.");
+                return;
+            }
+
+            string sessionName = menuCanvas.GetRoomName();
+            if (string.IsNullOrWhiteSpace(sessionName))
+                sessionName = "Room-" + UnityEngine.Random.Range(1000, 9999);
+
+            var sceneInfo = new NetworkSceneInfo();
+            sceneInfo.AddSceneRef(SceneRef.FromIndex(gameIndex), LoadSceneMode.Single);
+            sceneInfo.AddSceneRef(SceneRef.FromIndex(mapIndex), LoadSceneMode.Additive);
+
+            string password = menuCanvas.IsPasswordEnabled ? menuCanvas.GetPassword() : string.Empty;
+            PlayerPrefs.SetInt("has_pass", menuCanvas.IsPasswordEnabled ? 1 : 0);
+            _creatingRoom = true;
             loadingScreenScript.gameObject.SetActive(true);
-            Invoke(nameof(ContinueCreateRoom), loadingScreenScript.lerpSpeed);
-        }
-        private void ContinueCreateRoom()
-        {
-            string sessionName = null;
-            string sessionPassword = null;
-            int maxPlayers = 2;
-            if (IsRoomNameValid())
+            StartCoroutine(ContinueCreateRoom(new StartGameArgs
             {
-                sessionName = menuCanvas.GetRoomName();
-                sessionPassword = menuCanvas.GetPassword();
-                maxPlayers = menuCanvas.GetMaxPlayers();
-            }
-            else
-            {
-                int randomInt = UnityEngine.Random.Range(1000, 9999);
-                sessionPassword = menuCanvas.GetPassword();
-                maxPlayers = menuCanvas.GetMaxPlayers();
-                sessionName = "Room-" + randomInt;
-            }
-
-            Debug.Log($"Session name is {sessionName}");
-
-            Debug.Log($"maxPlayers is {maxPlayers}");
-
-            if (menuCanvas.IsPasswordEnabled)
-            {
-                PlayerPrefs.SetInt("has_pass", 1);
-                JoinRoom(sessionName, maxPlayers, sessionPassword);
-            }
-            else
-            {
-                JoinRoom(sessionName, maxPlayers,string.Empty);
-            }
-
-            StopCoroutine(AutoRefreshRoomList());
+                GameMode = GameMode.Host,
+                SessionName = sessionName,
+                Scene = sceneInfo,
+                SessionProperties = new Dictionary<string, SessionProperty> { [RaceMapCatalog.MapProperty] = mapPath },
+                PlayerCount = menuCanvas.GetMaxPlayers()
+            }, password));
         }
 
-        private bool IsRoomNameValid()
+        private IEnumerator ContinueCreateRoom(StartGameArgs args, string password)
         {
-            return menuCanvas.GetRoomName().Length != 0;
+            yield return new WaitForSeconds(loadingScreenScript.lerpSpeed);
+            RoomPassword.Apply(args.SessionProperties, password);
+            StartHostRoom(args);
         }
 
         public bool TryGetLocalPlayerComponent<T>(out T component)
@@ -419,21 +403,7 @@ namespace AvocadoShark
 
         public async void JoinRoom(string sessionName)
         {
-            int buildIndex = -1;
-
-            for (int i = 0; i < SceneManager.sceneCountInBuildSettings; i++)
-            {
-                string scenePath = SceneUtility.GetScenePathByBuildIndex(i);
-                string sceneName = System.IO.Path.GetFileNameWithoutExtension(scenePath);
-
-                if (sceneName == "Game")
-                {
-                    buildIndex = i;
-                    break;
-                }
-            }
-
-            if (buildIndex < 0)
+            if (SceneUtility.GetBuildIndexByScenePath(RaceMapCatalog.GameScenePath) < 0)
             {
                 popup.ShowPopup("The Game scene is missing from Build Settings.");
                 return;
@@ -443,72 +413,50 @@ namespace AvocadoShark
             if (!SetUpComponents())
                 return;
 
-            var result = await Runner.StartGame(new StartGameArgs()
+            var runner = Runner;
+            var result = await runner.StartGame(new StartGameArgs
             {
                 GameMode = GameMode.Client,
                 SessionName = sessionName,
-                Scene = SceneRef.FromIndex(buildIndex),
-                // Join only - never create. Without this, a room that closed between the
-                // last lobby refresh and this click would be silently re-created here
-                // under the same name and WITHOUT its password properties, turning a
-                // private room into a public one.
+                SceneManager = GetSceneManager(runner),
                 EnableClientSessionCreation = false,
             });
             if (result.Ok)
                 return;
 
-            await ShutdownFailedRunner(Runner);
+            await ShutdownFailedRunner(runner);
             if (this != null && !_returningToMenu)
                 popup.ShowPopup(result.ShutdownReason.ToString());
         }
 
-        public async void JoinRoom(string sessionName, int maxPlayers, string password = null)
+        private async void StartHostRoom(StartGameArgs args)
         {
-            int buildIndex = -1;
-
-            // Publishes a salt + PBKDF2 hash, never the password itself: Photon sends
-            // session properties to every client browsing the lobby.
-            var sessionProperties = new Dictionary<string, SessionProperty>();
-            RoomPassword.Apply(sessionProperties, password);
-
-            for (int i = 0; i < SceneManager.sceneCountInBuildSettings; i++)
-            {
-                string scenePath = SceneUtility.GetScenePathByBuildIndex(i);
-                string sceneName = System.IO.Path.GetFileNameWithoutExtension(scenePath);
-
-                if (sceneName == "Game")
-                {
-                    buildIndex = i;
-                    break;
-                }
-            }
-
-            if (buildIndex < 0)
-            {
-                popup.ShowPopup("The Game scene is missing from Build Settings.");
-                return;
-            }
-
             StopCoroutine(AutoRefreshRoomList());
-
-            if (!SetUpComponents())
-                return;
-
-            var result = await Runner.StartGame(new StartGameArgs()
+            try
             {
-                GameMode = GameMode.Host,
-                SessionName = sessionName,
-                Scene = SceneRef.FromIndex(buildIndex),
-                SessionProperties = sessionProperties,
-                PlayerCount = maxPlayers
-            });
-            if (result.Ok)
-            {
-                return;
+                if (!SetUpComponents())
+                    return;
+
+                var runner = Runner;
+                args.SceneManager = GetSceneManager(runner);
+                var result = await runner.StartGame(args);
+                if (result.Ok)
+                    return;
+
+                await ShutdownFailedRunner(runner);
+                if (this != null && !_returningToMenu)
+                    popup.ShowPopup(result.ShutdownReason.ToString());
             }
+            finally
+            {
+                _creatingRoom = false;
+            }
+        }
 
-            await ShutdownFailedRunner(Runner);
-            popup.ShowPopup(result.ShutdownReason.ToString());
+        private static INetworkSceneManager GetSceneManager(NetworkRunner runner)
+        {
+            return runner.GetComponent<INetworkSceneManager>() ??
+                runner.gameObject.AddComponent<NetworkSceneManagerDefault>();
         }
 
         private async Task ShutdownFailedRunner(NetworkRunner failedRunner)
@@ -604,9 +552,8 @@ namespace AvocadoShark
                 if (!runner.IsServer)
                     return;
 
-                int spawnIndex = 0;
                 foreach (PlayerRef player in runner.ActivePlayers)
-                    SpawnHostPlayerCharacter(runner, player, spawnIndex++);
+                    SpawnHostPlayerCharacter(runner, player);
                 return;
             }
 
@@ -619,17 +566,17 @@ namespace AvocadoShark
                 return;
             }
 
-            var location = GetPlayerSpawnLocation(0);
+            var (position, rotation) = GetPlayerSpawnPose(runner, 0);
 
             var playerObject = runner.Spawn(
                 fsNetworkPlayerPrefab,
-                location,
-                Quaternion.identity);
+                position,
+                rotation);
 
             runner.SetPlayerObject(runner.LocalPlayer, playerObject);
         }
 
-        private void SpawnHostPlayerCharacter(NetworkRunner runner, PlayerRef player, int spawnIndex)
+        private void SpawnHostPlayerCharacter(NetworkRunner runner, PlayerRef player)
         {
             if (runner.GetPlayerObject(player) != null)
                 return;
@@ -640,26 +587,47 @@ namespace AvocadoShark
                 return;
             }
 
+            int spawnIndex = 0;
+            while (_spawnSlots.ContainsValue(spawnIndex))
+                spawnIndex++;
+
+            var (position, rotation) = GetPlayerSpawnPose(runner, spawnIndex);
             var playerObject = runner.Spawn(
                 fsNetworkPlayerPrefab,
-                GetPlayerSpawnLocation(spawnIndex),
-                Quaternion.identity,
+                position,
+                rotation,
                 player);
 
             if (playerObject != null)
+            {
+                _spawnSlots[player] = spawnIndex;
                 runner.SetPlayerObject(player, playerObject);
+            }
         }
 
-        private Vector3 GetPlayerSpawnLocation(int spawnIndex)
+        private (Vector3 Position, Quaternion Rotation) GetPlayerSpawnPose(NetworkRunner runner, int spawnIndex)
         {
-            var location = !UseCustomLocation
-                ? new Vector3(UnityEngine.Random.Range(-7.6f, 14.2f), 0,
-                    UnityEngine.Random.Range(-41.22f, -31.48f))
-                : CustomLocation;
-
-            // Keep Host-spawned participants apart before the race formation is set.
-            if (spawnIndex > 0)
-                location += new Vector3((spawnIndex % 2) * 1.5f, 0, (spawnIndex / 2) * 1.5f);
+            Vector3 location;
+            Quaternion rotation = Quaternion.identity;
+            var start = !UseCustomLocation && RaceMapCatalog.TryGetLoadedMap(out var map)
+                ? RaceMapCatalog.FindStartPoint(map)
+                : null;
+            if (start != null)
+            {
+                // Keep the slot positions stable as the room fills.
+                var slots = start.CalculatePlayerSlots(Mathf.Max(spawnIndex + 1, runner.SessionInfo.MaxPlayers));
+                location = slots[spawnIndex];
+                rotation = start.transform.rotation;
+            }
+            else
+            {
+                location = UseCustomLocation
+                    ? CustomLocation
+                    : new Vector3(UnityEngine.Random.Range(-7.6f, 14.2f), 0,
+                        UnityEngine.Random.Range(-41.22f, -31.48f));
+                if (spawnIndex > 0)
+                    location += new Vector3((spawnIndex % 2) * 1.5f, 0, (spawnIndex / 2) * 1.5f);
+            }
 
             // Treat location.y as floor height and lift the network root to place the
             // child CharacterController capsule on that floor.
@@ -679,7 +647,7 @@ namespace AvocadoShark
                 Debug.LogWarning("FS Network Player has no CharacterController; spawning without floor-height correction.");
             }
 
-            return location;
+            return (location, rotation);
         }
 
         #region INetworkCallbacks
@@ -831,12 +799,13 @@ namespace AvocadoShark
                 playersInSession.Add(player);
 
             if (runner.GameMode != GameMode.Shared && runner.IsServer && hasEnteredGameScene)
-                SpawnHostPlayerCharacter(runner, player, playersInSession.IndexOf(player));
+                SpawnHostPlayerCharacter(runner, player);
         }
 
         public void OnPlayerLeft(NetworkRunner runner, PlayerRef player)
         {
             playersInSession.Remove(player);
+            _spawnSlots.Remove(player);
 
             if (runner.GameMode != GameMode.Shared && runner.IsServer)
             {
@@ -860,52 +829,11 @@ namespace AvocadoShark
             if (hasEnteredGameScene)
                 return;
 
-            // Wait until the shared parkour environment is ready on this client.
-            // Otherwise a joining player's controller can simulate gravity before
-            // the floor exists locally and the proxy appears to start in the air.
-            int environment1BuildIndex = FindBuildIndex("Environment 1");
-            int environment2BuildIndex = FindBuildIndex("Environment 2");
-            if (environment1BuildIndex < 0 || environment2BuildIndex < 0)
-            {
-                Debug.LogError("'Environment 1' and/or 'Environment 2' is missing from Build Settings. The player was not spawned.");
+            // Fusion loads the map and Game together. Wait for both before
+            // spawning so a new player does not fall through an unloaded map.
+            if (!SceneManager.GetSceneByPath(RaceMapCatalog.GameScenePath).isLoaded ||
+                !RaceMapCatalog.TryGetLoadedMap(out _))
                 return;
-            }
-
-            var environment1Scene = SceneManager.GetSceneByBuildIndex(environment1BuildIndex);
-            var environment2Scene = SceneManager.GetSceneByBuildIndex(environment2BuildIndex);
-            bool anEnvironmentIsLoaded =
-                (environment1Scene.IsValid() && environment1Scene.isLoaded) ||
-                (environment2Scene.IsValid() && environment2Scene.isLoaded);
-
-            if (!anEnvironmentIsLoaded)
-            {
-                if (runner.IsSceneAuthority && !_initialEnvironmentLoadStarted)
-                {
-                    _initialEnvironmentLoadStarted = true;
-                    var loadOperation = runner.LoadScene(SceneRef.FromIndex(environment1BuildIndex), LoadSceneMode.Additive);
-                    loadOperation.AddOnCompleted(_ =>
-                    {
-                        if (this == null || runner != Runner || _returningToMenu)
-                            return;
-
-                        var loadedEnvironment = SceneManager.GetSceneByBuildIndex(environment1BuildIndex);
-                        if (!loadedEnvironment.IsValid() || !loadedEnvironment.isLoaded)
-                        {
-                            Debug.LogError("Fusion failed to load the initial Environment 1 scene.");
-                            _initialEnvironmentLoadStarted = false;
-                            return;
-                        }
-
-                        if (!hasEnteredGameScene)
-                        {
-                            hasEnteredGameScene = true;
-                            SpawnPlayerCharacter(runner);
-                        }
-                    });
-                }
-
-                return;
-            }
 
             hasEnteredGameScene = true;
             SpawnPlayerCharacter(runner);
@@ -927,26 +855,15 @@ namespace AvocadoShark
             isConnected = false;
             hasEnteredGameScene = false;
             _clientGameSceneLoadStarted = false;
-            _initialEnvironmentLoadStarted = false;
             playersInSession.Clear();
+            _spawnSlots.Clear();
             _lastInputSample = default;
 
             if (clientWasInRoom && shutdownReason != ShutdownReason.Ok)
                 ReturnToMenu(runner);
         }
 
-        private static int FindBuildIndex(string sceneName)
-        {
-            for (int i = 0; i < SceneManager.sceneCountInBuildSettings; i++)
-            {
-                string path = SceneUtility.GetScenePathByBuildIndex(i);
-                if (string.Equals(System.IO.Path.GetFileNameWithoutExtension(path), sceneName,
-                        StringComparison.Ordinal))
-                    return i;
-            }
 
-            return -1;
-        }
 
         public void OnUserSimulationMessage(NetworkRunner runner, SimulationMessagePtr message)
         {

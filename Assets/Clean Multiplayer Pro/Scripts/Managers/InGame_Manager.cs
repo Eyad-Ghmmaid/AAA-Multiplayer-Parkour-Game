@@ -16,8 +16,8 @@ namespace AvocadoShark
 {
     public class InGame_Manager : NetworkBehaviour
     {
-        public int environment1, environment2;
         public TextMeshProUGUI room_name;
+
         public TextMeshProUGUI players;
         public Image lock_image;
         public Sprite locked_sprite;
@@ -189,13 +189,6 @@ namespace AvocadoShark
             fps = 1.0f / Time.smoothDeltaTime;
 
             runner = NetworkRunner.GetRunnerForGameObject(gameObject);
-
-            if (environment1 < 0 || environment1 >= SceneManager.sceneCountInBuildSettings ||
-                environment2 < 0 || environment2 >= SceneManager.sceneCountInBuildSettings)
-            {
-                Debug.LogError($"Environment scene indexes are invalid (Environment 1: {environment1}, Environment 2: {environment2}). Check the Game scene's InGame_Manager settings against Build Settings.", this);
-                return;
-            }
         }
 
         public override void FixedUpdateNetwork()
@@ -300,7 +293,8 @@ namespace AvocadoShark
 
         private void ToggleReadyForPlayer(PlayerRef source)
         {
-            if (RacePhase != RaceWaiting && RacePhase != RaceFinished && RacePhase != RaceRematchWaiting)
+            if (_sceneSwitchInProgress ||
+                (RacePhase != RaceWaiting && RacePhase != RaceFinished && RacePhase != RaceRematchWaiting))
                 return;
 
             if (source == PlayerRef.None || !IsPlayerActive(source))
@@ -532,7 +526,7 @@ namespace AvocadoShark
         public void RequestAuthoritativeRespawn(NetworkObject playerObject)
         {
             if (Object == null || !Object.IsValid || !IsHostAuthoritativeSession || !HasStateAuthority ||
-                playerObject == null || !playerObject.HasStateAuthority || RacePhase == RaceCountdown)
+                playerObject == null || !playerObject.HasStateAuthority || _sceneSwitchInProgress || RacePhase == RaceCountdown)
                 return;
 
             var target = playerObject.InputAuthority;
@@ -774,50 +768,87 @@ namespace AvocadoShark
                 SceneSwitchRpc();
                 return;
             }
-            if (!Runner.IsSceneAuthority) 
+
+            if (!Runner.IsSceneAuthority || _sceneSwitchInProgress || RacePhase == RaceCountdown ||
+                RacePhase == RaceRunning || RaceMapCatalog.Paths.Count < 2 ||
+                !RaceMapCatalog.TryGetLoadedMap(out var currentMap))
                 return;
 
-            if (_sceneSwitchInProgress)
-                return;
+            var paths = RaceMapCatalog.Paths;
+            int currentIndex = 0;
+            while (currentIndex < paths.Count && paths[currentIndex] != currentMap.path)
+                currentIndex++;
 
-            var firstEnvironment = SceneManager.GetSceneByBuildIndex(environment1);
-            var secondEnvironment = SceneManager.GetSceneByBuildIndex(environment2);
-            int loadedEnvironmentIndex = firstEnvironment.IsValid() && firstEnvironment.isLoaded
-                ? environment1
-                : secondEnvironment.IsValid() && secondEnvironment.isLoaded
-                    ? environment2
-                    : -1;
-
-            if (loadedEnvironmentIndex < 0)
-            {
-                Debug.LogError("Scene switch requested, but neither configured environment scene is loaded.", this);
-                return;
-            }
-
-            int sceneToLoad = loadedEnvironmentIndex == environment1 ? environment2 : environment1;
+            string destinationPath = paths[(currentIndex + 1) % paths.Count];
+            var sceneToLoad = SceneRef.FromIndex(SceneUtility.GetBuildIndexByScenePath(destinationPath));
+            var activeRunner = Runner;
             _sceneSwitchInProgress = true;
 
-            // Keep the current level until Fusion has loaded the destination on all peers.
-            var loadOperation = Runner.LoadScene(SceneRef.FromIndex(sceneToLoad), LoadSceneMode.Additive);
-            loadOperation.AddOnCompleted(_ =>
+            // Keep the current track available until the destination is loaded and usable.
+            var load = activeRunner.LoadScene(sceneToLoad, LoadSceneMode.Additive);
+            load.AddOnCompleted(operation =>
             {
-                if (Runner == null || Runner.IsShutdown)
+                if (this == null || activeRunner == null || activeRunner.IsShutdown)
+                    return;
+
+                var destination = SceneManager.GetSceneByPath(destinationPath);
+                if (operation.Error != null || !destination.isLoaded)
                 {
+                    Debug.LogWarning($"Fusion could not load {destinationPath}.", this);
                     _sceneSwitchInProgress = false;
                     return;
                 }
 
-                var destination = SceneManager.GetSceneByBuildIndex(sceneToLoad);
-                if (!destination.IsValid() || !destination.isLoaded)
+                var start = RaceMapCatalog.FindStartPoint(destination);
+                if (start == null)
                 {
-                    Debug.LogError($"Fusion failed to load environment scene index {sceneToLoad}. The current environment was kept.", this);
-                    _sceneSwitchInProgress = false;
+                    Debug.LogWarning($"The map {destinationPath} has no active RaceStartPoint.", this);
+                    var discard = activeRunner.UnloadScene(sceneToLoad);
+                    discard.AddOnCompleted(_ => _sceneSwitchInProgress = false);
                     return;
                 }
 
-                var unloadOperation = Runner.UnloadScene(SceneRef.FromIndex(loadedEnvironmentIndex));
-                unloadOperation.AddOnCompleted(__ => _sceneSwitchInProgress = false);
+                var unload = activeRunner.UnloadScene(SceneRef.FromIndex(currentMap.buildIndex));
+                unload.AddOnCompleted(result =>
+                {
+                    if (this == null || activeRunner == null || activeRunner.IsShutdown)
+                        return;
+
+                    _sceneSwitchInProgress = false;
+                    if (result.Error != null)
+                    {
+                        Debug.LogWarning($"Fusion could not unload {currentMap.path}.", this);
+                        return;
+                    }
+
+                    ResetRaceForMap(start);
+                    activeRunner.SessionInfo.UpdateCustomProperties(new Dictionary<string, SessionProperty>
+                    {
+                        [RaceMapCatalog.MapProperty] = destinationPath
+                    });
+                });
             });
+        }
+
+        private void ResetRaceForMap(RaceStartPoint start)
+        {
+            RacePhase = RaceWaiting;
+            RaceRoundId++;
+            RaceCountdownEndTime = 0d;
+            RaceStartTime = 0d;
+            ReadyPlayers.Clear();
+            FinishedPlayers.Clear();
+            RaceParticipants.Clear();
+            FinishTimes.Clear();
+            CheckpointProgress.Clear();
+            _pendingHostTeleports.Clear();
+            _localRaceCountdownLock = false;
+
+            var players = new List<PlayerRef>(Runner.ActivePlayers);
+            players.Sort((left, right) => left.PlayerId.CompareTo(right.PlayerId));
+            var slots = start.CalculatePlayerSlots(players.Count);
+            for (int i = 0; i < players.Count; i++)
+                TeleportPlayerRpc(players[i], slots[i], start.transform.rotation);
         }
 
         [Rpc(RpcSources.Proxies,RpcTargets.StateAuthority)]

@@ -3,6 +3,7 @@ using UnityEngine;
 using TMPro;
 using UnityEngine.UI;
 using System.Collections;
+using System.Linq;
 using Fusion;
 
 namespace AvocadoShark
@@ -56,11 +57,15 @@ namespace AvocadoShark
         private void ApplySessionInfo(SessionInfo session, FusionConnection fusionConnection)
         {
             SessionInfo = session;
-            roomName.text = session.Name;
+            bool hasMap = RaceMapCatalog.TryGetRoomMap(session, out var mapPath);
+            bool hasLocalMap = !hasMap || RaceMapCatalog.Paths.Contains(mapPath);
+            string name = RichTextSafety.Escape(session.Name);
+            string mapName = hasLocalMap && hasMap ? RichTextSafety.Escape(RaceMapCatalog.GetName(mapPath)) : "Map unavailable";
+            roomName.text = hasMap ? $"<size=24>{name}</size>\n<size=18>{mapName}</size>" : name;
             currentPlayers = session.PlayerCount;
             maxPlayers = session.MaxPlayers;
             playerCount.text = session.PlayerCount + "/" + session.MaxPlayers;
-            joinButton.interactable = session.IsOpen;
+            joinButton.interactable = session.IsOpen && hasLocalMap;
             fusionConnectionRef = fusionConnection;
             // Only whether a password is required is kept here - never the password or its
             // hash, and it is never logged.

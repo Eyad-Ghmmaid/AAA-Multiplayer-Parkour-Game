@@ -18,6 +18,78 @@ public class MenuCanvas : MonoBehaviour
     public bool IsPasswordEnabled { private set; get; } = false;
 
     [SerializeField] private TMP_InputField nameInputField, passwordInputField;
+    private TMP_Dropdown mapDropdown;
+
+    internal void ConfigureMapSelection(TMP_Dropdown template)
+    {
+        if (RoomCreationPanel == null || template == null || template.template == null ||
+            template.captionText == null || mapDropdown != null)
+            return;
+
+        var panel = RoomCreationPanel.transform;
+        mapDropdown = Instantiate(template, panel, false);
+        mapDropdown.name = "MapDropdown";
+        mapDropdown.onValueChanged = new TMP_Dropdown.DropdownEvent();
+        var regionIcon = mapDropdown.transform.Find("Image");
+        if (regionIcon != null)
+            regionIcon.gameObject.SetActive(false);
+
+        var dropdownRect = (RectTransform)mapDropdown.transform;
+        dropdownRect.anchorMin = dropdownRect.anchorMax = new Vector2(1f, 0.5f);
+        dropdownRect.pivot = new Vector2(1f, 0.5f);
+        dropdownRect.anchoredPosition = new Vector2(-38f, -175f);
+        dropdownRect.sizeDelta = new Vector2(250f, 56f);
+
+        var list = mapDropdown.template;
+        list.anchorMin = Vector2.zero;
+        list.anchorMax = Vector2.right;
+        list.pivot = new Vector2(0.5f, 1f);
+        list.anchoredPosition = new Vector2(0f, -4f);
+
+        var caption = mapDropdown.captionText;
+        var captionRect = caption.rectTransform;
+        captionRect.offsetMin = new Vector2(14f, 0f);
+        captionRect.offsetMax = new Vector2(-42f, 0f);
+        caption.fontSizeMax = 24f;
+        caption.fontSizeMin = 16f;
+        caption.enableAutoSizing = true;
+        caption.alignment = TextAlignmentOptions.MidlineLeft;
+        caption.richText = false;
+        if (mapDropdown.itemText != null)
+        {
+            mapDropdown.itemText.fontSizeMax = 22f;
+            mapDropdown.itemText.fontSizeMin = 16f;
+            mapDropdown.itemText.enableAutoSizing = true;
+            mapDropdown.itemText.richText = false;
+        }
+
+        var label = Instantiate(caption, panel, false);
+        label.name = "MapLabel";
+        label.text = "Map";
+        label.raycastTarget = false;
+        label.enableAutoSizing = false;
+        label.fontSize = 20f;
+        var labelRect = label.rectTransform;
+        labelRect.anchorMin = labelRect.anchorMax = dropdownRect.anchorMin;
+        labelRect.pivot = dropdownRect.pivot;
+        labelRect.anchoredPosition = new Vector2(-38f, -133f);
+        labelRect.sizeDelta = new Vector2(250f, 24f);
+
+        mapDropdown.ClearOptions();
+        var names = RaceMapCatalog.Paths.Select(RaceMapCatalog.GetName).ToList();
+        if (names.Count == 0)
+            names.Add("No maps available");
+        mapDropdown.AddOptions(names);
+        mapDropdown.SetValueWithoutNotify(0);
+        mapDropdown.RefreshShownValue();
+        mapDropdown.interactable = RaceMapCatalog.Paths.Count > 1;
+    }
+
+    internal string GetSelectedMapPath()
+    {
+        int index = mapDropdown != null ? mapDropdown.value : 0;
+        return index >= 0 && index < RaceMapCatalog.Paths.Count ? RaceMapCatalog.Paths[index] : null;
+    }
 
     private void Awake()
     {
