@@ -2335,7 +2335,8 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GrapplingHookController
   range: 20
-  aimRadius: 0.22
+  aimRadius: 0.4
+  maxAimAssistAngle: 4
   maxCameraOffset: 6
   worldMask:
     serializedVersion: 2
@@ -2349,11 +2350,13 @@ MonoBehaviour:
   projectileSpeed: 55
   minimumCastTime: 0.07
   minimumRopeLength: 1.35
+  maximumRopeLength: 15
+  groundLiftHeight: 2
   swingAcceleration: 6
   maximumSpeed: 22
   drag: 0.1
   reelSpeed: 8
-  reelAcceleration: 25
+  reelAcceleration: 15
   reelGravityScale: 0.25
   rappelSpeed: 4
   rappelFallSpeed: 5
@@ -2363,7 +2366,7 @@ MonoBehaviour:
   ledgeAssistHeight: 1.15
   ledgeUpSpeed: 5.6
   ledgeForwardSpeed: 2.4
-  maxStamina: 100
+  maxStamina: 350
   minimumStaminaToFire: 12
   swingStaminaPerSecond: 13
   reelStaminaPerSecond: 10
@@ -2373,7 +2376,7 @@ MonoBehaviour:
   ropeOrigin: {fileID: 0}
   ropeRenderer: {fileID: 0}
   ropeMaterial: {fileID: 2100000, guid: cd7abc9ddb6c4de99bc07504a62c89ec, type: 2}
-  ropeWidth: 0.026
+  ropeWidth: 0.045
   showReticle: 1
   reticleOverride: {fileID: 0}
   readyColor: {r: 0.75, g: 1, b: 0.54, a: 1}
@@ -5634,12 +5637,13 @@ MonoBehaviour:
         minDistanceFromTarget: 0
         overridedFollowTarget: {fileID: 0}
         serialized: 1
-    distanceSmoothTime: 0.1
+    distanceSmoothTime: 0.12
     framingSmoothTime: 0.1
+  rotationResponseTime: 0.04
   lockCursor: 1
   collisionLayers:
     serializedVersion: 2
-    m_Bits: 1
+    m_Bits: 8388609
   collisionPadding: 0.05
   nearClipPlane: 0.01
   distanceSmoothTimeWhenOcluded: 0

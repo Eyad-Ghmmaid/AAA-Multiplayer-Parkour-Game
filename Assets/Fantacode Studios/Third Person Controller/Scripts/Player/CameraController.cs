@@ -28,6 +28,9 @@ namespace FS_Core
         public CameraTypeSettings firstPersonCamera;
         public CameraTypeSettings thirdPersonCamera;
 
+        [Tooltip("Time in seconds for the remaining look angle to fall to 37%. Zero applies look input immediately.")]
+        [SerializeField, Min(0f)] private float rotationResponseTime = 0.09f;
+
         [Tooltip("Determines whether the cursor should be locked. Must be set before starting play mode. Cannot be changed at runtime.")]
         [SerializeField] private bool lockCursor = true;
 
@@ -41,7 +44,7 @@ namespace FS_Core
         [Tooltip("Near clip plane distance. Must be set before starting play mode. Cannot be changed at runtime.")]
         [SerializeField] private float nearClipPlane = 0.01f;
 
-        [Tooltip("Smooth time to use when camera distance is changed due to a collision.")]
+        [Tooltip("Recovery time while an obstacle still limits camera distance. Zero uses the camera type's distance smoothing.")]
         [SerializeField] private float distanceSmoothTimeWhenOcluded = 0.05f;
 
 
@@ -54,10 +57,10 @@ namespace FS_Core
 
         CameraState currentState;
         Vector3 currentFollowPos;
-        float targetDistance, currDistance;
+        float currentBoomLength;
         Vector3 currFramingOffset;
 
-        float distSmoothVel = 0f;
+        float boomSmoothVelocity;
         Vector3 framingSmoothVel, followSmoothVel = Vector3.zero;
 
         float rotationX;
@@ -112,27 +115,11 @@ namespace FS_Core
             var followTarget = currentCameraTypeSettings.defaultSettings.overridedFollowTarget == null ? this.followTarget : currentCameraTypeSettings.defaultSettings.overridedFollowTarget;
             currentFollowPos = followTarget.position - Vector3.forward * 4;
             settings = currentCameraTypeSettings.defaultSettings;
-            currDistance = settings.distance;
+            currentBoomLength = new Vector2(settings.framingOffset.x, settings.distance).magnitude;
             currFramingOffset = settings.framingOffset;
             previousPos = currentFollowPos;
-            CalculateNearPlanePoints();
 
             targetRotationY = transform.rotation.eulerAngles.y;
-        }
-
-        List<Vector3> nearPlanePoints = new List<Vector3>();
-        void CalculateNearPlanePoints()
-        {
-            var camera = GetComponent<Camera>();
-            float z = camera.nearClipPlane;
-            float y = Mathf.Tan((camera.fieldOfView / 2) * Mathf.Deg2Rad) * z;
-            float x = y * camera.aspect + collisionPadding;
-
-            nearPlanePoints.Add(new Vector3(x, y, z));
-            nearPlanePoints.Add(new Vector3(-x, y, z));
-            nearPlanePoints.Add(new Vector3(x, -y, z));
-            nearPlanePoints.Add(new Vector3(-x, -y, z));
-            nearPlanePoints.Add(Vector3.zero);
         }
 
         CameraState SystemToCameraState(SystemState state)
@@ -256,13 +243,11 @@ namespace FS_Core
                 targetRotationX = Mathf.Clamp(targetRotationX, settings.minVerticalAngle, settings.maxVerticalAngle);
                 targetRotationY += cameraInput.x;
 
-                // Use configurable smoothing instead of fixed high-speed lerp
-
-                // Use configurable smoothing instead of fixed high-speed lerp
-                float rotationSmoothSpeed = 10f; // Adjust this value as needed (lower = smoother, higher = more responsive)
-
-                rotationX = Mathf.Lerp(rotationX, targetRotationX, Time.deltaTime * rotationSmoothSpeed);
-                rotationY = Mathf.Lerp(rotationY, targetRotationY, Time.deltaTime * rotationSmoothSpeed);
+                float lookBlend = rotationResponseTime > 0f
+                    ? 1f - Mathf.Exp(-Time.deltaTime / rotationResponseTime)
+                    : 1f;
+                rotationX = Mathf.Lerp(rotationX, targetRotationX, lookBlend);
+                rotationY = Mathf.Lerp(rotationY, targetRotationY, lookBlend);
 
                 targetRotation = Quaternion.Euler(rotationX, rotationY, 0);
             }
@@ -287,45 +272,71 @@ namespace FS_Core
             var forward = targetRotation * Vector3.up;
             forward.y = 0;
 
-            var right = targetRotation * Vector3.right;
             var focusPosition = currentFollowPos + Vector3.up * currFramingOffset.y + forward * currFramingOffset.z;
-
-            bool collisionAdjusted = false;
-            if (settings.enableCameraCollisions)
-            {
-                RaycastHit hit;
-                float closestDistance = settings.distance;
-                int closestPoint = 0;
-                nearPlanePoints[4] = Vector3.zero;
-                for (int i = 0; i < nearPlanePoints.Count; i++)
-                {
-                    if (Physics.Raycast(focusPosition, (transform.TransformPoint(nearPlanePoints[i]) - focusPosition), out hit, (transform.TransformPoint(nearPlanePoints[i]) - focusPosition).magnitude + 0.1f, collisionLayers, QueryTriggerInteraction.Ignore))
-                    {
-                        if (hit.distance < closestDistance)
-                        {
-                            closestDistance = hit.distance;
-                            closestPoint = i;
-                        }
-                        collisionAdjusted = true;
-                    }
-                }
-                //(transform.TransformPoint(nearPlanePoints[i]) - focusPosition);
-                targetDistance = Mathf.Clamp(settings.distance * (closestDistance / (transform.TransformPoint(nearPlanePoints[closestPoint]) - focusPosition).magnitude), settings.minDistanceFromTarget, closestDistance);
-            }
-            else
-                targetDistance = settings.distance;
-
-            float smoothTime = collisionAdjusted ? distanceSmoothTimeWhenOcluded : currentCameraTypeSettings.distanceSmoothTime;
-            currDistance = Mathf.SmoothDamp(currDistance, targetDistance, ref distSmoothVel, smoothTime);
-
-            transform.position = focusPosition - targetRotation * new Vector3(0, 0, currDistance);
-            transform.rotation = targetRotation;
-            transform.position += transform.right * currFramingOffset.x * (settings.distance == 0 || settings.localRotationOffset != Vector2.zero ? 1 : currDistance / settings.distance);
+            transform.SetPositionAndRotation(ResolveCameraPosition(focusPosition, targetRotation), targetRotation);
             previousPos = currentFollowPos;
             previousCameraType = CameraType;
             playerController.OnCameraLateUpdate?.Invoke();
 
             playerController.CurrentCameraSettings = settings;
+        }
+
+        private Vector3 ResolveCameraPosition(Vector3 focusPosition, Quaternion targetRotation)
+        {
+            var boom = targetRotation * new Vector3(currFramingOffset.x, 0f, -settings.distance);
+            float desiredLength = boom.magnitude;
+            if (desiredLength <= 0.0001f)
+            {
+                currentBoomLength = 0f;
+                boomSmoothVelocity = 0f;
+                return focusPosition;
+            }
+
+            var direction = boom / desiredLength;
+            float clearLength = Mathf.Max(desiredLength, currentBoomLength);
+            if (settings.enableCameraCollisions)
+            {
+                float minimumLength = settings.distance > 0f
+                    ? desiredLength * Mathf.Clamp01(settings.minDistanceFromTarget / settings.distance)
+                    : 0f;
+                clearLength = Mathf.Max(minimumLength, GetClearBoomLength(focusPosition, direction, clearLength));
+            }
+
+            if (currentBoomLength > clearLength)
+            {
+                currentBoomLength = clearLength;
+                boomSmoothVelocity = 0f;
+            }
+            else
+            {
+                float targetLength = Mathf.Min(desiredLength, clearLength);
+                float smoothTime = clearLength < desiredLength && distanceSmoothTimeWhenOcluded > 0f
+                    ? distanceSmoothTimeWhenOcluded
+                    : currentCameraTypeSettings.distanceSmoothTime;
+                currentBoomLength = Mathf.SmoothDamp(currentBoomLength, targetLength, ref boomSmoothVelocity, smoothTime);
+                if (currentBoomLength > clearLength)
+                {
+                    currentBoomLength = clearLength;
+                    boomSmoothVelocity = 0f;
+                }
+            }
+
+            return focusPosition + direction * currentBoomLength;
+        }
+
+        private float GetClearBoomLength(Vector3 origin, Vector3 direction, float length)
+        {
+            float near = camera.nearClipPlane;
+            float halfHeight = Mathf.Tan(camera.fieldOfView * Mathf.Deg2Rad * 0.5f) * near;
+            float radius = new Vector3(halfHeight * camera.aspect, halfHeight, near).magnitude + collisionPadding;
+            if (Physics.SphereCast(origin, radius, direction, out var hit, length, collisionLayers, QueryTriggerInteraction.Ignore))
+                length = hit.distance;
+
+            // A center ray can catch a wall already overlapping the sweep sphere at the pivot.
+            if (Physics.Raycast(origin, direction, out hit, length, collisionLayers, QueryTriggerInteraction.Ignore))
+                length = Mathf.Max(0f, hit.distance - radius);
+
+            return length;
         }
 
         public Quaternion PlanarRotation => Quaternion.Euler(0, rotationY, 0);

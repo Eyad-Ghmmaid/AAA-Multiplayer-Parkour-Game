@@ -22,6 +22,7 @@ public struct GrapplePresentation : INetworkStruct
     public GrapplePhase Phase;
     public int Shot;
     public float Extension;
+    public float RopeLength;
     public float Stamina;
     public Vector3 Anchor;
     public NetworkId AnchorObject;
@@ -40,11 +41,15 @@ public sealed class GrapplingHookController : SystemBase
     public const int RappelButton = 1;
     private const string Grappleable = "Grappleable";
     private const float ContactTolerance = 0.06f;
+    private const float RopeLengthEpsilon = 0.001f;
     private const int AimHitCapacity = 32;
+    private const int RopeSegments = 12;
 
     [Header("Targeting")]
     [SerializeField, Min(0.5f)] private float range = 20f;
     [SerializeField, Min(0.01f)] private float aimRadius = 0.22f;
+    [Tooltip("Maximum angle from the crosshair for assisted targets. Zero disables aim assist.")]
+    [SerializeField, Range(0f, 10f)] private float maxAimAssistAngle = 4f;
     [SerializeField, Min(0.5f)] private float maxCameraOffset = 6f;
     [SerializeField] private LayerMask worldMask = Physics.DefaultRaycastLayers;
     [SerializeField] private LayerMask grappleableLayers;
@@ -58,6 +63,10 @@ public sealed class GrapplingHookController : SystemBase
     [SerializeField, Min(1f)] private float projectileSpeed = 55f;
     [SerializeField, Min(0.05f)] private float minimumCastTime = 0.07f;
     [SerializeField, Min(0.3f)] private float minimumRopeLength = 1.35f;
+    [Tooltip("Total cable available, including the length paid out while rappelling.")]
+    [SerializeField, Min(0.3f)] private float maximumRopeLength = 20f;
+    [Tooltip("Approximate lift height when the hook attaches while grounded. Zero disables the lift.")]
+    [SerializeField, Min(0f)] private float groundLiftHeight = 2.5f;
     [SerializeField, Min(0f)] private float swingAcceleration = 6f;
     [SerializeField, Min(1f)] private float maximumSpeed = 22f;
     [SerializeField, Min(0f)] private float drag = 0.1f;
@@ -95,6 +104,7 @@ public sealed class GrapplingHookController : SystemBase
     [SerializeField] private Color idleColor = new Color(1f, 1f, 1f, 0.54f);
 
     private readonly RaycastHit[] aimHits = new RaycastHit[AimHitCapacity];
+    private readonly Vector3[] ropePoints = new Vector3[RopeSegments + 1];
     private PlayerController playerController;
     private CharacterController capsule;
     private ICharacter player;
@@ -117,10 +127,12 @@ public sealed class GrapplingHookController : SystemBase
     private GrapplePhase phase;
 
     private int localPress;
-    private Vector3 localPressOffset;
+    private Vector3 localPressOrigin;
     private Vector3 localPressDirection;
     private int consumedPress;
     private bool pendingToggle;
+    private Vector3 pendingAimOrigin;
+    private Vector3 pendingAimDirection;
     private bool movementAllowed;
     private bool suspendedRootMotion;
     private bool previousRootMotion;
@@ -152,6 +164,8 @@ public sealed class GrapplingHookController : SystemBase
 
     private Vector3 Harness => transform.TransformPoint(capsule.center);
     private int CollisionMask => worldMask.value & ~ignoredLayers;
+    private float RopeLimit => Mathf.Max(0.3f, maximumRopeLength);
+    private float HookReach => Mathf.Min(range, RopeLimit);
 
     private void Awake()
     {
@@ -186,22 +200,24 @@ public sealed class GrapplingHookController : SystemBase
 
     private void Update()
     {
-        if (!OwnsInput || !AcceptsLocalInput() || View == null)
+        var keyboard = Keyboard.current;
+        if (!OwnsInput || keyboard == null || grappleKey == Key.None ||
+            !keyboard[grappleKey].wasPressedThisFrame || !AcceptsLocalInput())
             return;
 
-        var keyboard = Keyboard.current;
-        if (keyboard != null && grappleKey != Key.None && keyboard[grappleKey].wasPressedThisFrame)
-        {
-            localPressOffset = View.position - transform.position;
-            localPressDirection = View.forward;
-            localPress++;
-        }
+        var view = View;
+        if (view == null)
+            return;
+
+        localPressOrigin = view.position;
+        localPressDirection = view.forward;
+        localPress++;
     }
 
     public void WriteNetworkInput(ref FSPlayerNetworkInput input)
     {
         input.GrapplePress = localPress;
-        input.GrappleAimOffset = localPressOffset;
+        input.GrappleAimOrigin = localPressOrigin;
         input.GrappleAimDirection = localPressDirection;
 
         var keyboard = Keyboard.current;
@@ -215,10 +231,16 @@ public sealed class GrapplingHookController : SystemBase
     public void ReadAuthorityInput(FSPlayerNetworkInput input, bool hasInput, bool canMove)
     {
         movementAllowed = canMove && !player.PreventAllSystems && capsule.enabled;
-        if (hasInput)
+        if (hasInput && input.GrapplePress != consumedPress)
         {
-            pendingToggle |= movementAllowed && input.GrapplePress != consumedPress;
             consumedPress = input.GrapplePress;
+            if (movementAllowed)
+            {
+                // A queued press can outlive the input sample used for the held buttons.
+                pendingToggle = true;
+                pendingAimOrigin = input.GrappleAimOrigin;
+                pendingAimDirection = input.GrappleAimDirection;
+            }
         }
         authorityInput = hasInput ? input : default;
 
@@ -253,7 +275,7 @@ public sealed class GrapplingHookController : SystemBase
                 stamina = Mathf.Min(maxStamina, stamina + staminaRecoveryPerSecond * dt);
 
             if (movementAllowed && toggle && CanStartCast() &&
-                TryGetValidatedAim(out var origin, out var direction) && TryFindAnchor(origin, direction, out var hit))
+                TryGetAuthorityAim(out var origin, out var direction) && TryFindAnchor(origin, direction, out var hit))
                 StartCast(hit);
             return;
         }
@@ -301,41 +323,105 @@ public sealed class GrapplingHookController : SystemBase
             !player.PreventAllSystems && (actionExecutor == null || actionExecutor.CurrentAction == null);
     }
 
-    private bool TryGetValidatedAim(out Vector3 origin, out Vector3 direction)
+    private bool TryGetAuthorityAim(out Vector3 origin, out Vector3 direction)
     {
-        origin = transform.position + authorityInput.GrappleAimOffset;
-        direction = authorityInput.GrappleAimDirection;
+        origin = pendingAimOrigin;
+        direction = pendingAimDirection;
+        float directionLengthSquared = direction.sqrMagnitude;
         if (!IsFinite(origin) || !IsFinite(direction) ||
-            authorityInput.GrappleAimOffset.sqrMagnitude > maxCameraOffset * maxCameraOffset ||
-            direction.sqrMagnitude < 0.25f || direction.sqrMagnitude > 4f)
+            (origin - transform.position).sqrMagnitude > maxCameraOffset * maxCameraOffset ||
+            directionLengthSquared < 0.25f || directionLengthSquared > 4f)
             return false;
 
         direction.Normalize();
-        // A remote view origin must still be reachable from its authoritative avatar.
-        return !Physics.Linecast(Harness, origin, CollisionMask, QueryTriggerInteraction.Ignore);
+        return true;
     }
 
     private bool TryFindAnchor(Vector3 origin, Vector3 direction, out RaycastHit result)
     {
         result = default;
-        int count = Physics.SphereCastNonAlloc(origin, aimRadius, direction, aimHits, range,
-            CollisionMask, QueryTriggerInteraction.Ignore);
-        if (count == AimHitCapacity)
+        Vector3 harness = Harness;
+        if (IsLineBlocked(harness, origin, 0f))
             return false;
 
-        float nearest = float.PositiveInfinity;
+        if (TryFindDirectHit(origin, direction, out var direct) && IsValidAnchor(direct, origin, harness))
+        {
+            result = direct;
+            return true;
+        }
+
+        if (maxAimAssistAngle <= 0f)
+            return false;
+
+        int count = Physics.SphereCastNonAlloc(origin, aimRadius, direction, aimHits, range,
+            CollisionMask, QueryTriggerInteraction.Ignore);
+        if (count == aimHits.Length)
+            return false;
+
+        float maxSlope = Mathf.Tan(maxAimAssistAngle * Mathf.Deg2Rad);
+        float bestError = maxSlope * maxSlope;
+        float bestDepth = float.PositiveInfinity;
         for (int i = 0; i < count; i++)
         {
             var hit = aimHits[i];
-            if (hit.collider == null || hit.distance >= nearest || hit.collider.transform.IsChildOf(transform))
+            if (!IsAimHit(hit))
                 continue;
 
-            nearest = hit.distance;
+            Vector3 toHit = hit.point - origin;
+            float depth = Vector3.Dot(toHit, direction);
+            if (depth <= 0f)
+                continue;
+
+            float error = Vector3.Cross(toHit, direction).sqrMagnitude / (depth * depth);
+            if (error > bestError || (error == bestError && depth >= bestDepth) ||
+                !IsValidAnchor(hit, origin, harness) || IsLineBlocked(origin, hit.point, 0.001f))
+                continue;
+
+            bestError = error;
+            bestDepth = depth;
             result = hit;
         }
-        return result.collider != null && IsGrappleable(result.collider.transform) &&
-            (result.point - origin).sqrMagnitude <= range * range &&
-            Vector3.Distance(result.point, Harness) <= range && !IsRopeBlocked(result.point);
+        return result.collider != null;
+    }
+
+    private bool TryFindDirectHit(Vector3 origin, Vector3 direction, out RaycastHit result)
+    {
+        if (!Physics.Raycast(origin, direction, out result, range, CollisionMask, QueryTriggerInteraction.Ignore))
+            return false;
+        if (IsAimHit(result))
+            return true;
+
+        // Only collect all hits when the closest one must be skipped.
+        int count = Physics.RaycastNonAlloc(origin, direction, aimHits, range, CollisionMask, QueryTriggerInteraction.Ignore);
+        if (count == aimHits.Length)
+            return false;
+
+        result = default;
+        float closestDistance = float.PositiveInfinity;
+        for (int i = 0; i < count; i++)
+        {
+            var hit = aimHits[i];
+            if (hit.distance >= closestDistance || !IsAimHit(hit))
+                continue;
+
+            closestDistance = hit.distance;
+            result = hit;
+        }
+        return result.collider != null;
+    }
+
+    private bool IsAimHit(RaycastHit hit)
+    {
+        var collider = hit.collider;
+        return hit.distance > 0f && collider != null && !collider.transform.IsChildOf(transform);
+    }
+
+    private bool IsValidAnchor(RaycastHit hit, Vector3 origin, Vector3 harness)
+    {
+        float reach = HookReach;
+        return IsGrappleable(hit.collider.transform) && (hit.point - origin).sqrMagnitude <= range * range &&
+            (hit.point - harness).sqrMagnitude <= reach * reach &&
+            !IsLineBlocked(harness, hit.point, ContactTolerance);
     }
 
     private bool IsGrappleable(Transform target)
@@ -363,13 +449,16 @@ public sealed class GrapplingHookController : SystemBase
     private void Attach(Vector3 anchor)
     {
         float distance = Vector3.Distance(Harness, anchor);
-        if (!CanTakeMovementFocus() || distance > range || distance < 0.15f)
+        float reach = HookReach;
+        if (!CanTakeMovementFocus() || distance > reach || distance < 0.15f)
         {
             Release(false);
             return;
         }
 
         velocity = Vector3.ClampMagnitude(capsule.velocity, maximumSpeed);
+        bool liftFromGround = groundLiftHeight > 0f &&
+            (capsule.isGrounded || (velocity.y <= 0f && locomotion.CheckIsGrounded()));
         player.FocusSystem(this);
         if (!IsInFocus)
         {
@@ -377,7 +466,14 @@ public sealed class GrapplingHookController : SystemBase
             return;
         }
 
-        ropeLength = Mathf.Clamp(distance, Mathf.Min(minimumRopeLength, range), range);
+        ropeLength = Mathf.Clamp(distance, Mathf.Min(minimumRopeLength, reach), reach);
+        if (liftFromGround)
+        {
+            float liftGravity = Mathf.Abs(player.Gravity);
+            if (authorityInput.GrappleButtons.IsSet(ReelButton) && reelGravityScale > 0f)
+                liftGravity *= reelGravityScale;
+            velocity.y = Mathf.Max(velocity.y, Mathf.Sqrt(2f * liftGravity * groundLiftHeight));
+        }
         previousRootMotion = locomotion.UseLocomotionRootMotion;
         locomotion.UseLocomotionRootMotion = false;
         suspendedRootMotion = true;
@@ -399,27 +495,30 @@ public sealed class GrapplingHookController : SystemBase
         Vector3 anchorVelocity = anchorStep / dt;
         lastAnchor = anchor;
 
+        float limit = RopeLimit;
+        ropeLength = Mathf.Min(ropeLength, limit);
         if (reel)
         {
-            ropeLength = Mathf.MoveTowards(ropeLength, Mathf.Min(minimumRopeLength, range), reelSpeed * dt);
+            float shortestLength = Mathf.Min(minimumRopeLength, ropeLength);
+            ropeLength = Mathf.Max(shortestLength, ropeLength - reelSpeed * dt);
             float speedAlongRope = Vector3.Dot(velocity - anchorVelocity, inward);
             velocity += inward * Mathf.Clamp(reelSpeed - speedAlongRope, 0f, reelAcceleration * dt);
         }
         else if (rappel)
         {
-            ropeLength = Mathf.Min(range, ropeLength + rappelSpeed * dt);
+            ropeLength = Mathf.Min(limit, ropeLength + rappelSpeed * dt);
         }
 
         if (rappel && velocity.y < 0f)
             velocity.y = Mathf.Lerp(velocity.y, -rappelFallSpeed, 1f - Mathf.Exp(-rappelDamping * dt));
         else
             velocity.y += player.Gravity * (reel ? reelGravityScale : 1f) * dt;
-        Vector3 forward = Vector3.ProjectOnPlane(authorityInput.CameraForward, Vector3.up).normalized;
-        if (!IsFinite(forward) || forward.sqrMagnitude < 0.01f)
-            forward = transform.forward;
         Vector2 move = authorityInput.Move;
-        if (float.IsFinite(move.x) && float.IsFinite(move.y))
+        if (float.IsFinite(move.x) && float.IsFinite(move.y) && move.sqrMagnitude > 0f)
         {
+            Vector3 forward = Vector3.ProjectOnPlane(authorityInput.CameraForward, Vector3.up).normalized;
+            if (!IsFinite(forward) || forward.sqrMagnitude < 0.01f)
+                forward = transform.forward;
             move = Vector2.ClampMagnitude(move, 1f);
             var steer = forward * move.y + Vector3.Cross(Vector3.up, forward) * move.x;
             if (toAnchor.magnitude >= ropeLength - ContactTolerance)
@@ -437,7 +536,9 @@ public sealed class GrapplingHookController : SystemBase
         Vector3 requested = anchor + Vector3.ClampMagnitude(radial, ropeLength) - position;
         CollisionFlags collision = capsule.Move(requested);
         Vector3 finalRadial = Harness - anchor;
-        if (finalRadial.magnitude > ropeLength + ContactTolerance)
+        float allowableDistance = Mathf.Min(ropeLength + ContactTolerance, limit + RopeLengthEpsilon);
+        float allowableDistanceSquared = allowableDistance * allowableDistance;
+        if (finalRadial.sqrMagnitude > allowableDistanceSquared)
         {
             // Contact sliding can move the capsule outside the rope sphere.
             // Correct through the capsule too, so a blocked pull cannot tunnel.
@@ -455,7 +556,7 @@ public sealed class GrapplingHookController : SystemBase
         bool grounded = (collision & CollisionFlags.Below) != 0;
         player.Animator.SetBool(AnimatorParameters.IsGrounded, grounded);
         player.Animator.SetFloat(AnimatorParameters.fallAmount, Mathf.Clamp01(Mathf.Abs(velocity.y) * 0.05f));
-        if (finalRadial.magnitude > ropeLength + ContactTolerance || IsRopeBlocked(anchor))
+        if (finalRadial.sqrMagnitude > allowableDistanceSquared || IsRopeBlocked(anchor))
             Release(true);
     }
 
@@ -504,14 +605,15 @@ public sealed class GrapplingHookController : SystemBase
         return IsFinite(anchor);
     }
 
-    private bool IsRopeBlocked(Vector3 anchor)
+    private bool IsRopeBlocked(Vector3 anchor) => IsLineBlocked(Harness, anchor, ContactTolerance);
+
+    private bool IsLineBlocked(Vector3 start, Vector3 end, float endClearance)
     {
-        Vector3 start = Harness;
-        Vector3 rope = anchor - start;
-        if (rope.sqrMagnitude <= ContactTolerance * ContactTolerance)
+        Vector3 segment = end - start;
+        if (segment.sqrMagnitude <= endClearance * endClearance)
             return false;
 
-        return Physics.Linecast(start, anchor - rope.normalized * ContactTolerance,
+        return Physics.Linecast(start, end - segment.normalized * endClearance,
             CollisionMask, QueryTriggerInteraction.Ignore);
     }
 
@@ -558,6 +660,7 @@ public sealed class GrapplingHookController : SystemBase
         anchorCollider = null;
         anchorTransform = null;
         networkAnchor = null;
+        ropeLength = 0f;
         velocity = Vector3.zero;
         recoveryDelay = staminaRecoveryDelay;
     }
@@ -572,6 +675,7 @@ public sealed class GrapplingHookController : SystemBase
         }
 
         state.Extension = phase == GrapplePhase.Casting ? Mathf.Clamp01(castElapsed / castTime) : 1f;
+        state.RopeLength = ropeLength;
         if (networkAnchor != null && networkAnchor.IsValid)
         {
             state.AnchorObject = networkAnchor.Id;
@@ -607,10 +711,70 @@ public sealed class GrapplingHookController : SystemBase
             anchor = target.transform.TransformPoint(visible.AnchorLocalPoint);
 
         Vector3 origin = ropeOrigin != null ? ropeOrigin.position : Harness;
-        ropeRenderer.SetPosition(0, origin);
-        ropeRenderer.SetPosition(1, Vector3.Lerp(origin, anchor, visible.Extension));
+        if (visible.Phase == GrapplePhase.Casting)
+            DrawStraightRope(origin, origin + Vector3.ClampMagnitude(anchor - origin, RopeLimit) * visible.Extension);
+        else
+            DrawAttachedRope(origin, anchor, Mathf.Clamp(visible.RopeLength, 0f, RopeLimit));
         ropeRenderer.enabled = true;
     }
+
+    private void DrawStraightRope(Vector3 origin, Vector3 end)
+    {
+        ropeRenderer.positionCount = 2;
+        ropeRenderer.SetPosition(0, origin);
+        ropeRenderer.SetPosition(1, end);
+    }
+
+    private void DrawAttachedRope(Vector3 origin, Vector3 anchor, float length)
+    {
+        Vector3 chord = anchor - origin;
+        if (length - chord.magnitude <= RopeLengthEpsilon)
+        {
+            // The animated hand can lie outside the rope constraint at the harness.
+            DrawStraightRope(anchor - Vector3.ClampMagnitude(chord, length), anchor);
+            return;
+        }
+
+        // Fit the slack to the length of the actual segments submitted to the LineRenderer.
+        float lowerSag = 0f;
+        float upperSag = length * 0.5f;
+        Vector3 chordStep = chord / RopeSegments;
+        for (int i = 0; i < 12; i++)
+        {
+            float sag = (lowerSag + upperSag) * 0.5f;
+            if (CurvedRopeLength(chordStep, sag) > length)
+                upperSag = sag;
+            else
+                lowerSag = sag;
+        }
+
+        for (int i = 0; i <= RopeSegments; i++)
+        {
+            float fraction = (float)i / RopeSegments;
+            ropePoints[i] = Vector3.Lerp(origin, anchor, fraction) - Vector3.up * RopeDrop(fraction, lowerSag);
+        }
+
+        ropeRenderer.positionCount = ropePoints.Length;
+        ropeRenderer.SetPositions(ropePoints);
+    }
+
+    private static float CurvedRopeLength(Vector3 chordStep, float sag)
+    {
+        float length = 0f;
+        float horizontalStepSquared = chordStep.x * chordStep.x + chordStep.z * chordStep.z;
+        // A parabola has a constant second difference across evenly spaced points.
+        float dropStep = 4f * sag / (RopeSegments * RopeSegments);
+        float verticalStep = chordStep.y - (RopeSegments - 1) * dropStep;
+        float verticalStepChange = 2f * dropStep;
+        for (int i = 0; i < RopeSegments; i++)
+        {
+            length += Mathf.Sqrt(horizontalStepSquared + verticalStep * verticalStep);
+            verticalStep += verticalStepChange;
+        }
+        return length;
+    }
+
+    private static float RopeDrop(float fraction, float sag) => 4f * fraction * (1f - fraction) * sag;
 
     private void EnsureRopeRenderer()
     {

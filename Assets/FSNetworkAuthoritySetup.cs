@@ -285,6 +285,8 @@ public class FSNetworkAuthoritySetup : NetworkBehaviour
             if (earlier.Shot == later.Shot && earlier.Phase != GrapplePhase.Idle && later.Phase != GrapplePhase.Idle)
             {
                 visible.Extension = Mathf.Lerp(earlier.Extension, later.Extension, alpha);
+                if (earlier.Phase != GrapplePhase.Casting && later.Phase != GrapplePhase.Casting)
+                    visible.RopeLength = Mathf.Lerp(earlier.RopeLength, later.RopeLength, alpha);
                 visible.Anchor = Vector3.Lerp(earlier.Anchor, later.Anchor, alpha);
                 if (earlier.AnchorObject == later.AnchorObject)
                     visible.AnchorLocalPoint = Vector3.Lerp(earlier.AnchorLocalPoint, later.AnchorLocalPoint, alpha);

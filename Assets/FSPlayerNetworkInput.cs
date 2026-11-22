@@ -28,6 +28,6 @@ public struct FSPlayerNetworkInput : INetworkInput
 
     public int GrapplePress;
     public NetworkButtons GrappleButtons;
-    public Vector3 GrappleAimOffset;
+    public Vector3 GrappleAimOrigin;
     public Vector3 GrappleAimDirection;
 }
