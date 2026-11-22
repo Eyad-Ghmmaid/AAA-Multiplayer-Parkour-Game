@@ -1492,6 +1492,7 @@ GameObject:
   - component: {fileID: 7384810136300765298}
   - component: {fileID: 2269997654753091448}
   - component: {fileID: 4489207361145281702}
+  - component: {fileID: 6364852478059160041}
   m_Layer: 8
   m_Name: Player
   m_TagString: Player
@@ -1534,6 +1535,7 @@ MonoBehaviour:
   - {fileID: 8150945093211653810}
   - {fileID: 781401647338987147}
   - {fileID: 1375471749704258411}
+  - {fileID: 6364852478059160041}
   <CurrentSystemState>k__BackingField: 0
   _editorSearchString: 
   cameraGameObject: {fileID: 7413941264763873406}
@@ -2320,6 +2322,62 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   logDiagnostics: 1
+--- !u!114 &6364852478059160041
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1867889191492008202}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: f27dad48d99f4e91bc1e79d1521cdde1, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::GrapplingHookController
+  range: 20
+  aimRadius: 0.22
+  maxCameraOffset: 6
+  worldMask:
+    serializedVersion: 2
+    m_Bits: 4294967291
+  grappleableLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  grappleKey: 21
+  reelKey: 32
+  rappelKey: 36
+  projectileSpeed: 55
+  minimumCastTime: 0.07
+  minimumRopeLength: 1.35
+  swingAcceleration: 6
+  maximumSpeed: 22
+  drag: 0.1
+  reelSpeed: 8
+  reelAcceleration: 25
+  reelGravityScale: 0.25
+  rappelSpeed: 4
+  rappelFallSpeed: 5
+  rappelDamping: 12
+  maximumAnchorStep: 1.25
+  ledgeAssistRange: 2.6
+  ledgeAssistHeight: 1.15
+  ledgeUpSpeed: 5.6
+  ledgeForwardSpeed: 2.4
+  maxStamina: 100
+  minimumStaminaToFire: 12
+  swingStaminaPerSecond: 13
+  reelStaminaPerSecond: 10
+  rappelStaminaPerSecond: 5
+  staminaRecoveryPerSecond: 24
+  staminaRecoveryDelay: 0.8
+  ropeOrigin: {fileID: 0}
+  ropeRenderer: {fileID: 0}
+  ropeMaterial: {fileID: 2100000, guid: cd7abc9ddb6c4de99bc07504a62c89ec, type: 2}
+  ropeWidth: 0.026
+  showReticle: 1
+  reticleOverride: {fileID: 0}
+  readyColor: {r: 0.75, g: 1, b: 0.54, a: 1}
+  idleColor: {r: 1, g: 1, b: 1, a: 0.54}
 --- !u!1 &1953128215061339965
 GameObject:
   m_ObjectHideFlags: 0
@@ -5548,7 +5606,7 @@ MonoBehaviour:
   thirdPersonCamera:
     defaultSettings:
       distance: 2.5
-      framingOffset: {x: 0, y: 1.5, z: 0}
+      framingOffset: {x: 0.8, y: 1.5, z: 0}
       followSmoothTime: 0.1
       localRotationOffset: {x: 0, y: 0}
       sensitivity: 0.6

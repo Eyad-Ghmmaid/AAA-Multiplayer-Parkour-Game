@@ -770,6 +770,10 @@ namespace AvocadoShark
 
                 if (playerController != null && playerController.cameraGameObject != null)
                     data.CameraForward = playerController.cameraGameObject.transform.forward;
+
+                var grapple = playerObject.GetComponentInChildren<GrapplingHookController>(true);
+                if (grapple != null && grapple.isActiveAndEnabled)
+                    grapple.WriteNetworkInput(ref data);
             }
 
             if (logInputDiagnostics && Time.frameCount - _lastInputDiagnosticFrame >= 120)

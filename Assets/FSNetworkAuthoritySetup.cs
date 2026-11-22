@@ -30,10 +30,14 @@ public class FSNetworkAuthoritySetup : NetworkBehaviour
     private int authoritativeTeleportSettleFrames;
     private NetworkMecanimAnimator networkAnimator;
     private bool isLocalInputProxy;
+    private GrapplingHookController grapplingHook;
+
+    [Networked] private GrapplePresentation NetworkGrapple { get; set; }
 
     public override void Spawned()
     {
         raceManager = FindAnyObjectByType<InGame_Manager>();
+        grapplingHook = GetComponentInChildren<GrapplingHookController>(true);
         bool hasStateAuthority = Object.HasStateAuthority;
         bool hasInputAuthority = Object.HasInputAuthority;
 
@@ -188,11 +192,18 @@ public class FSNetworkAuthoritySetup : NetworkBehaviour
 
     public override void FixedUpdateNetwork()
     {
+        if (!Object.HasStateAuthority)
+            return;
+
+        if (grapplingHook != null && grapplingHook.isActiveAndEnabled)
+            NetworkGrapple = grapplingHook.CapturePresentation();
+        else if (NetworkGrapple.Phase != GrapplePhase.Idle)
+            NetworkGrapple = default;
+
         // Shared Mode remains on the existing local-authority path. In Host/Server
         // mode, the Host feeds remote players from Fusion input while retaining the
         // FS controller as the only writer of their movement.
-        if ((Runner.GameMode != GameMode.Host && Runner.GameMode != GameMode.Server)
-            || !Object.HasStateAuthority)
+        if (Runner.GameMode != GameMode.Host && Runner.GameMode != GameMode.Server)
             return;
 
         // Clear the previous tick's values if this tick has no input. Keeping stale
@@ -206,6 +217,9 @@ public class FSNetworkAuthoritySetup : NetworkBehaviour
         // Fail closed in Host/Server mode if the race authority is missing; this
         // component must never silently accept remote movement without validation.
         bool raceAllowsMovement = raceManager != null && raceManager.CanPlayerMoveOnAuthority(Object.InputAuthority);
+        if (grapplingHook != null && grapplingHook.isActiveAndEnabled)
+            grapplingHook.ReadAuthorityInput(data, hasInput,
+                raceAllowsMovement && (inputManager == null || !inputManager.RaceInputLocked));
 
         if (logDiagnostics && Time.unscaledTime >= nextAuthorityDiagnosticTime)
         {
@@ -255,6 +269,28 @@ public class FSNetworkAuthoritySetup : NetworkBehaviour
 
         if (!Object.HasInputAuthority && playerController != null && playerController.cameraGameObject != null && data.CameraForward.sqrMagnitude > 0.0001f)
             playerController.cameraGameObject.transform.rotation = Quaternion.LookRotation(data.CameraForward.normalized, Vector3.up);
+    }
+
+    public override void Render()
+    {
+        if (HasStateAuthority || grapplingHook == null)
+            return;
+
+        var visible = NetworkGrapple;
+        if (TryGetSnapshotsBuffers(out var from, out var to, out float alpha))
+        {
+            var (earlier, later) = GetPropertyReader<GrapplePresentation>(nameof(NetworkGrapple)).Read(from, to);
+            visible = alpha >= 1f ? later : earlier;
+            visible.Stamina = Mathf.Lerp(earlier.Stamina, later.Stamina, alpha);
+            if (earlier.Shot == later.Shot && earlier.Phase != GrapplePhase.Idle && later.Phase != GrapplePhase.Idle)
+            {
+                visible.Extension = Mathf.Lerp(earlier.Extension, later.Extension, alpha);
+                visible.Anchor = Vector3.Lerp(earlier.Anchor, later.Anchor, alpha);
+                if (earlier.AnchorObject == later.AnchorObject)
+                    visible.AnchorLocalPoint = Vector3.Lerp(earlier.AnchorLocalPoint, later.AnchorLocalPoint, alpha);
+            }
+        }
+        grapplingHook.SetRemotePresentation(visible);
     }
 
     private void Update()
@@ -333,6 +369,11 @@ public class FSNetworkAuthoritySetup : NetworkBehaviour
         if (Object == null || !Object.HasStateAuthority || networkedPlayerTransform == null)
             return;
 
+        if (grapplingHook != null)
+        {
+            grapplingHook.CancelForTeleport();
+            NetworkGrapple = grapplingHook.CapturePresentation();
+        }
         var characterController = networkedPlayerTransform.GetComponent<CharacterController>();
         var rigidbody = networkedPlayerTransform.GetComponent<Rigidbody>();
         var wasControllerEnabled = characterController != null && characterController.enabled;

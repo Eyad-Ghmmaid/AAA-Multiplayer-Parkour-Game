@@ -25,4 +25,9 @@ public struct FSPlayerNetworkInput : INetworkInput
     public bool ThrowUp;
     public bool ThrowCancel;
     public bool JumpFromHang;
+
+    public int GrapplePress;
+    public NetworkButtons GrappleButtons;
+    public Vector3 GrappleAimOffset;
+    public Vector3 GrappleAimDirection;
 }

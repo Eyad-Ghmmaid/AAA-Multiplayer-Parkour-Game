@@ -497,6 +497,17 @@ namespace FS_LocomotionSystem
             SetCurrentVelocity(ySpeed, currentVelocity, setMoveAmount, false);
         }
 
+        public void ApplyExternalAirMomentum(Vector3 velocity)
+        {
+            // GroundCheck can still touch the surface on the frame of an upward kick.
+            if (velocity.y > 0f)
+            {
+                isGrounded = false;
+                Animator.SetBool(AnimatorParameters.IsGrounded, false);
+            }
+            SetCurrentVelocity(velocity.y, velocity, true, !isGrounded);
+        }
+
         public void SetCurrentVelocity(float ySpeed, Vector3 currentVelocity, bool setMoveAmount, bool lockUntilGrounded)
         {
             // While the character is not grounded, apply gravity and move the character towards the landing position.
