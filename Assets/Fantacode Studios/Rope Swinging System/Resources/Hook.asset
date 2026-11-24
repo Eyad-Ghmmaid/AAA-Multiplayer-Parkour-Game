@@ -1,0 +1,318 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 087895dbd6658e54db7d20609ad3ca7f, type: 3}
+  m_Name: Hook
+  m_EditorClassIdentifier: 
+  id: b748da2f-7f2f-437e-a027-b113cb729cc6
+  name: Hook
+  description: 
+  icon: {fileID: 21300000, guid: 7a7ac10ebc2e18740844b737f4415b14, type: 3}
+  category: {fileID: 11400000, guid: c6fe7d7e5dce5db40a3029cf78de3ad5, type: 2}
+  overrideCategorySettings: 0
+  overrideCategoryAttributes: 0
+  equipmentSlotIndex: 9
+  modelPrefab: {fileID: 4318008938648318237, guid: 1646a5e10a62c524aaac888418914f3a, type: 3}
+  attachOnBody: 1
+  modelToAttach: {fileID: 0}
+  useCustomAttachmentModel: 0
+  usePhysicsForAttachedItem: 0
+  overridePhysicsPrefab: 0
+  physicsPrefab: {fileID: 0}
+  isSkinnedMesh: 0
+  hasHolder: 0
+  holderPrefab: {fileID: 0}
+  attachBone: 0
+  holderLocalPosition: {x: 0, y: 0, z: 0}
+  holderLocalRotation: {x: 0, y: 0, z: 0}
+  itemLocalPosition: {x: 0.19, y: -0.025, z: -0.16}
+  itemLocalRotation: {x: 0, y: 90, z: 0}
+  holderAttachReferences: []
+  itemAttachReferences: []
+  sellable: 0
+  droppable: 0
+  weight: 0
+  canCraft: 0
+  priceToCraft:
+    amount: 0
+    currencyIndex: 0
+  canDismantle: 0
+  priceToDismantle:
+    amount: 0
+    currencyIndex: 0
+  ingredients: []
+  overrideDismantleItems: 0
+  dismantleToItems: []
+  price:
+    amount: 0
+    currencyIndex: 0
+  requiresMultipleCurrencies: 0
+  currenciesRequired: []
+  overrideAction: 0
+  itemAction: {fileID: 0}
+  attributeValues: []
+  overrideAttributes: []
+  pickupPrefab: {fileID: 0}
+  spawnModel: 1
+  holderBone: 18
+  localPositionR: {x: -0.0147, y: 0.1008, z: 0.0334}
+  localRotationR: {x: 354.224, y: 88.601654, z: 49.07623}
+  localPositionL: {x: 0, y: 0, z: 0}
+  localRotationL: {x: 0, y: 0, z: 0}
+  itemEquipReferences:
+  - characterReference:
+      charcaterId: 1b1aea67-a8b1-442a-bb35-75605d6c6d44
+      avatar: {fileID: 9000000, guid: 36078ab0369161e49a29d349ae3e0739, type: 3}
+    localPosition: {x: 0.021, y: -0.062, z: -0.01}
+    localRotation: {x: 324.80472, y: 345.9339, z: 0.55270225}
+  unEquipDuringActions: 1
+  isDualItem: 0
+  overrideController: {fileID: 0}
+  itemEquippedIdleClip: {fileID: 7825730608530474273, guid: ee7d3c6fb0b3eb743a03455db2c18324, type: 3}
+  itemEquippedIdleClipMask: 3
+  itemEnableTime: 0
+  equipAudio: {fileID: 0}
+  itemDisableTime: 0
+  unEquipAudio: {fileID: 0}
+  equipClip:
+    clip: {fileID: 0}
+    customAnimationSpeed: 0
+    useAsGlobalTimeScale: 0
+    speedModifier:
+      currentModifierType: 0
+      constant: 1
+      curve:
+        serializedVersion: 2
+        m_Curve:
+        - serializedVersion: 3
+          time: 0
+          value: 1
+          inSlope: 0
+          outSlope: 0
+          tangentMode: 0
+          weightedMode: 0
+          inWeight: 0
+          outWeight: 0
+        - serializedVersion: 3
+          time: 1
+          value: 1
+          inSlope: 0
+          outSlope: 0
+          tangentMode: 0
+          weightedMode: 0
+          inWeight: 0
+          outWeight: 0
+        m_PreInfinity: 2
+        m_PostInfinity: 2
+        m_RotationOrder: 4
+      defaultCurveRect:
+        serializedVersion: 2
+        x: 0
+        y: 0
+        width: 1
+        height: 3
+      serialized: 1
+    useGravity: 1
+    gravityModifier:
+      currentModifierType: 0
+      constant: 1
+      curve:
+        serializedVersion: 2
+        m_Curve:
+        - serializedVersion: 3
+          time: 0
+          value: 1
+          inSlope: 0
+          outSlope: 0
+          tangentMode: 0
+          weightedMode: 0
+          inWeight: 0
+          outWeight: 0
+        - serializedVersion: 3
+          time: 1
+          value: 1
+          inSlope: 0
+          outSlope: 0
+          tangentMode: 0
+          weightedMode: 0
+          inWeight: 0
+          outWeight: 0
+        m_PreInfinity: 2
+        m_PostInfinity: 2
+        m_RotationOrder: 4
+      defaultCurveRect:
+        serializedVersion: 2
+        x: 0
+        y: -2
+        width: 1
+        height: 4
+      serialized: 1
+    showDetails: 0
+    TranistionInAndOut: {x: 0.2, y: 0.2}
+    events: []
+    onEndAnimation: []
+    serialized: 1
+  unEquipClip:
+    clip: {fileID: 0}
+    customAnimationSpeed: 0
+    useAsGlobalTimeScale: 0
+    speedModifier:
+      currentModifierType: 0
+      constant: 1
+      curve:
+        serializedVersion: 2
+        m_Curve:
+        - serializedVersion: 3
+          time: 0
+          value: 1
+          inSlope: 0
+          outSlope: 0
+          tangentMode: 0
+          weightedMode: 0
+          inWeight: 0
+          outWeight: 0
+        - serializedVersion: 3
+          time: 1
+          value: 1
+          inSlope: 0
+          outSlope: 0
+          tangentMode: 0
+          weightedMode: 0
+          inWeight: 0
+          outWeight: 0
+        m_PreInfinity: 2
+        m_PostInfinity: 2
+        m_RotationOrder: 4
+      defaultCurveRect:
+        serializedVersion: 2
+        x: 0
+        y: 0
+        width: 1
+        height: 3
+      serialized: 1
+    useGravity: 1
+    gravityModifier:
+      currentModifierType: 0
+      constant: 1
+      curve:
+        serializedVersion: 2
+        m_Curve:
+        - serializedVersion: 3
+          time: 0
+          value: 1
+          inSlope: 0
+          outSlope: 0
+          tangentMode: 0
+          weightedMode: 0
+          inWeight: 0
+          outWeight: 0
+        - serializedVersion: 3
+          time: 1
+          value: 1
+          inSlope: 0
+          outSlope: 0
+          tangentMode: 0
+          weightedMode: 0
+          inWeight: 0
+          outWeight: 0
+        m_PreInfinity: 2
+        m_PostInfinity: 2
+        m_RotationOrder: 4
+      defaultCurveRect:
+        serializedVersion: 2
+        x: 0
+        y: -2
+        width: 1
+        height: 4
+      serialized: 1
+    showDetails: 0
+    TranistionInAndOut: {x: 0.2, y: 0.2}
+    events: []
+    onEndAnimation: []
+    serialized: 1
+  ropeThrowingClip:
+    clip: {fileID: -3217223036285772610, guid: a6b139a99df9c4e42b444371c58c6ba6, type: 3}
+    customAnimationSpeed: 0
+    useAsGlobalTimeScale: 0
+    speedModifier:
+      currentModifierType: 0
+      constant: 1
+      curve:
+        serializedVersion: 2
+        m_Curve:
+        - serializedVersion: 3
+          time: 0
+          value: 1
+          inSlope: 0
+          outSlope: 0
+          tangentMode: 0
+          weightedMode: 0
+          inWeight: 0
+          outWeight: 0
+        - serializedVersion: 3
+          time: 1
+          value: 1
+          inSlope: 0
+          outSlope: 0
+          tangentMode: 0
+          weightedMode: 0
+          inWeight: 0
+          outWeight: 0
+        m_PreInfinity: 2
+        m_PostInfinity: 2
+        m_RotationOrder: 4
+      defaultCurveRect:
+        serializedVersion: 2
+        x: 0
+        y: 0
+        width: 1
+        height: 3
+      serialized: 1
+    useGravity: 1
+    gravityModifier:
+      currentModifierType: 0
+      constant: 1
+      curve:
+        serializedVersion: 2
+        m_Curve:
+        - serializedVersion: 3
+          time: 0
+          value: 1
+          inSlope: 0
+          outSlope: 0
+          tangentMode: 0
+          weightedMode: 0
+          inWeight: 0
+          outWeight: 0
+        - serializedVersion: 3
+          time: 1
+          value: 1
+          inSlope: 0
+          outSlope: 0
+          tangentMode: 0
+          weightedMode: 0
+          inWeight: 0
+          outWeight: 0
+        m_PreInfinity: 2
+        m_PostInfinity: 2
+        m_RotationOrder: 4
+      defaultCurveRect:
+        serializedVersion: 2
+        x: 0
+        y: -2
+        width: 1
+        height: 4
+      serialized: 1
+    showDetails: 0
+    TranistionInAndOut: {x: 0.2, y: 0.2}
+    events: []
+    onEndAnimation: []
+    serialized: 1

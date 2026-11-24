@@ -39,6 +39,7 @@ namespace FS_InteractionSystem
         public bool IsInteractionLocked => lockOnInteraction;
 
         public bool IsBusy => isInInteraction || actionExecutor.IsBusy;
+        internal bool HandsAreBusy => isInInteraction || lockOnInteraction || IsCarrying;
 
         public ActionExecutor ActionExecutor => actionExecutor;
 
@@ -148,7 +149,7 @@ namespace FS_InteractionSystem
                 if (RestoreItemAfterInteraction)
                     itemToRestore = itemEquipper.EquippedItem;
 
-                yield return itemEquipper.UnEquipItemAsync();
+                yield return itemEquipper.UnEquipItemAsync(forHandsFreeAction: true);
             }
 
             OnInteractionStart?.Invoke();
@@ -300,7 +301,7 @@ namespace FS_InteractionSystem
         {
             if (itemEquipper == null) return;
 
-            bool busy = isInInteraction || lockOnInteraction || IsCarrying;
+            bool busy = HandsAreBusy;
 
             if (busy)
             {

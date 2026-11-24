@@ -14,6 +14,7 @@ namespace FS_Core
         [field: HideInInspector] public List<EquippableItem> equippableItems = new List<EquippableItem>();
 
         public EquippableItem EquippedItem { get; set; }
+        internal EquippableItem ActionStowedItem { get; private set; }
 
         public bool IsCurrentItemUnusable { get; private set; }
         public EquippableItemHolder LeftHandHolder { get; private set; }
@@ -93,6 +94,8 @@ namespace FS_Core
 
         public void RemoveItem(EquippableItem item)
         {
+            if (ActionStowedItem == item)
+                ActionStowedItem = null;
             if (equippableItems.Contains(item))
             {
                 equippableItems.Remove(item);
@@ -190,6 +193,7 @@ namespace FS_Core
             };
 
             EquippedItem = itemData;
+            ActionStowedItem = null;
             OnEquip?.Invoke(itemData);
 
             // If an equip animation exists, play it and trigger the enable action at the right moment
@@ -313,12 +317,14 @@ namespace FS_Core
 
         #region UnEquip
 
-        public void UnEquipItem(bool playUnEquipAnimation = true, bool disableItem = true, Action onItemDisabled = null)
+        public void UnEquipItem(bool playUnEquipAnimation = true, bool disableItem = true, Action onItemDisabled = null,
+            bool forHandsFreeAction = false)
         {
-            StartCoroutine(UnEquipItemAsync(playUnEquipAnimation, disableItem, onItemDisabled));
+            StartCoroutine(UnEquipItemAsync(playUnEquipAnimation, disableItem, onItemDisabled, forHandsFreeAction));
         }
 
-        public IEnumerator UnEquipItemAsync(bool playUnEquipAnimation = true, bool disableItem = true, Action onItemDisabled = null)
+        public IEnumerator UnEquipItemAsync(bool playUnEquipAnimation = true, bool disableItem = true, Action onItemDisabled = null,
+            bool forHandsFreeAction = false)
         {
             // Exit if there is no currently equipped item, an item switch is already in progress, 
             // or if unequipping is prevented
@@ -346,6 +352,9 @@ namespace FS_Core
 
                     // Clear the currently equipped item reference
                     EquippedItem = null;
+                    IsCurrentItemUnusable = false;
+                    if (forHandsFreeAction && disableItem && itemData.RestoreAfterActionStow && equippableItems.Contains(itemData))
+                        ActionStowedItem = itemData;
 
                     // Remove item references from both hand handlers
                     RightHandHolder.currentItem = null;
@@ -492,6 +501,7 @@ namespace FS_Core
         /// </summary>
         public void DropAllItems()
         {
+            ActionStowedItem = null;
             foreach (var holder in GetComponentsInChildren<EquippableItemHolder>())
             {
                 var itemObject = holder.currentItem;
@@ -561,6 +571,18 @@ namespace FS_Core
         #endregion
 
         #region Utilities
+
+        internal void TryRestoreActionStowedItem()
+        {
+            if (ActionStowedItem == null || EquippedItem != null || PreventItemSwitching ||
+                InterruptItemSwitching || IsChangingItem)
+                return;
+
+            if (equippableItems.Contains(ActionStowedItem))
+                EquipItem(ActionStowedItem, playEquipAnimation: false);
+            else
+                ActionStowedItem = null;
+        }
 
         public void ResumeIdleAnimation()
         {

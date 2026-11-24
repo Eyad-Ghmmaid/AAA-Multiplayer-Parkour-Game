@@ -30,4 +30,28 @@ public struct FSPlayerNetworkInput : INetworkInput
     public NetworkButtons GrappleButtons;
     public Vector3 GrappleAimOrigin;
     public Vector3 GrappleAimDirection;
+
+    public int SwingFireSequence;
+    public int SwingReleaseSequence;
+    public int SwingClimbSequence;
+    public int SwingJumpSequence;
+    public int SwingPickupSequence;
+    public byte SwingClimbPress;
+    public byte SwingClimbHeld;
+    public bool SwingClimbModifier;
+    public Vector3 SwingAimOrigin;
+}
+
+public struct RopeSwingPresentation : INetworkStruct
+{
+    public NetworkBool Equipped;
+    public NetworkBool Stowed;
+    public NetworkBool InAction;
+    public NetworkBool HasCast;
+    public FS_SwingSystem.RopeState Phase;
+    public byte ClimbDirection;
+    public int ClimbInputSequence;
+    public float RopeLength;
+    public int Shot;
+    public Vector3 HookPoint;
 }

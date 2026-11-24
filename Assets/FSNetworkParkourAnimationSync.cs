@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using Fusion;
 using FS_Core;
 using FS_ParkourSystem;
+using FS_SwingSystem;
 using FC_ParkourSystem;
 using UnityEngine;
 
@@ -18,6 +19,8 @@ public class FSNetworkParkourAnimationSync : NetworkBehaviour
 {
     private static readonly int ClimbXHash = Animator.StringToHash("x");
     private static readonly int ClimbYHash = Animator.StringToHash("y");
+    private static readonly int RopeClimbUpHash = Animator.StringToHash("Base Layer.Swing." + AnimationNames.SwingClimbUp);
+    private static readonly int RopeClimbDownHash = Animator.StringToHash("Base Layer.Swing." + AnimationNames.SwingClimbDown);
 
     [SerializeField] private bool logDiagnostics;
 
@@ -75,6 +78,7 @@ public class FSNetworkParkourAnimationSync : NetworkBehaviour
     private ParkourController parkourController;
     private ClimbController climbController;
     private ClimbCore climbCore;
+    private SwingController swingController;
     private SlidingController slidingController;
 
     private string pendingActionName;
@@ -151,6 +155,7 @@ public class FSNetworkParkourAnimationSync : NetworkBehaviour
         parkourController = GetComponent<ParkourController>();
         climbController = GetComponent<ClimbController>();
         climbCore = GetComponent<ClimbCore>();
+        swingController = GetComponent<SwingController>();
         slidingController = GetComponent<SlidingController>();
 
         if (actionExecutor == null || animGraph == null || animator == null)
@@ -367,11 +372,22 @@ public class FSNetworkParkourAnimationSync : NetworkBehaviour
     private void ApplyOwnerBaseState(NetworkBehaviourBuffer state, NetworkBehaviourBuffer from,
         NetworkBehaviourBuffer to, float alpha, int authorityStateSequence)
     {
+        if (swingController?.PresentsOwnerRopePose == true)
+        {
+            // The rope snapshot already carries the selected climb direction and
+            // its acknowledged input. Leave this controller's generic state and
+            // action replay out of the owner's rope transition.
+            lastAppliedOwnerBaseStateHash = 0;
+            lastAppliedOwnerBaseStateSequence = -1;
+            return;
+        }
+
         int authorityStateHash = GetPropertyReader<int>(nameof(NetworkOwnerBaseStateHash)).Read(state);
         if (authorityStateHash == 0 || animator == null)
             return;
 
         bool isClimbContactState = GetPropertyReader<NetworkBool>(nameof(NetworkOwnerClimbContactState)).Read(state);
+        bool isRopeClimbState = authorityStateHash == RopeClimbUpHash || authorityStateHash == RopeClimbDownHash;
         float stateLength = GetPropertyReader<float>(nameof(NetworkOwnerBaseStateLength)).Read(state);
         float sampledPhase = InterpolateOwnerStateTime(nameof(NetworkOwnerBaseStateNormalizedTime), from, to, alpha);
         float normalizedTime = isClimbContactState ? Mathf.Clamp01(sampledPhase) : Mathf.Repeat(sampledPhase, 1f);
@@ -577,7 +593,7 @@ public class FSNetworkParkourAnimationSync : NetworkBehaviour
         bool hasQueuedMecanimState = !string.IsNullOrWhiteSpace(queuedMecanimStateName);
         float transitionDuration = hasQueuedMecanimState
             ? Mathf.Max(0f, queuedMecanimTransitionIn)
-            : (lastAppliedOwnerBaseStateHash == 0
+            : (lastAppliedOwnerBaseStateHash == 0 || isRopeClimbState
                 ? 0f
                 : (forceApplyBaseState ? 0.18f : 0.12f));
         bool appliedToPlayable = animGraph != null
@@ -676,7 +692,7 @@ public class FSNetworkParkourAnimationSync : NetworkBehaviour
     /// </summary>
     public bool ApplyProxyHangIK(Animator targetAnimator)
     {
-        if (HasStateAuthority || targetAnimator == null ||
+        if (Runner == null || HasStateAuthority || targetAnimator == null || swingController?.ControlsHandIK == true ||
             !TryGetSnapshotsBuffers(out var from, out var to, out float alpha))
             return false;
 
@@ -710,7 +726,7 @@ public class FSNetworkParkourAnimationSync : NetworkBehaviour
 
     private void OnAnimatorIK(int layerIndex)
     {
-        if (Object == null || animator == null)
+        if (Runner == null || Object == null || animator == null || swingController?.ControlsHandIK == true)
             return;
 
         if (layerIndex == 0)

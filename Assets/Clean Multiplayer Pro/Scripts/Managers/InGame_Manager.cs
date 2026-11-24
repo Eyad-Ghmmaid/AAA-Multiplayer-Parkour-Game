@@ -11,6 +11,8 @@ using StarterAssets;
 using UnityEngine.InputSystem;
 using FS_LocomotionSystem;
 using FS_ParkourSystem;
+using FS_InteractionSystem;
+using FS_SwingSystem;
 
 namespace AvocadoShark
 {
@@ -50,6 +52,11 @@ namespace AvocadoShark
         [Networked, Capacity(10)] private NetworkDictionary<PlayerRef, byte> RaceParticipants => default;
         [Networked, Capacity(10)] private NetworkDictionary<PlayerRef, float> FinishTimes => default;
         [Networked, Capacity(10)] private NetworkDictionary<PlayerRef, int> CheckpointProgress => default;
+        [Networked] private int SwingPickupMap { get; set; }
+        [Networked] private ulong CollectedSwingPickups { get; set; }
+
+        private readonly List<EquipHotspot> swingPickups = new List<EquipHotspot>();
+        private Scene swingPickupScene;
 
         private int _observedRoundId = -1;
         private bool _localRaceFinished;
@@ -196,6 +203,18 @@ namespace AvocadoShark
             if (!HasStateAuthority || Runner == null)
                 return;
 
+            if (IsHostAuthoritativeSession && RefreshSwingPickups())
+            {
+                SwingPickupMap = swingPickupScene.buildIndex;
+                ulong collected = 0;
+                for (int i = 0; i < swingPickups.Count; i++)
+                {
+                    if (swingPickups[i] == null || !swingPickups[i].gameObject.activeSelf)
+                        collected |= 1UL << i;
+                }
+                CollectedSwingPickups = collected;
+            }
+
             // Apply teleports inside Fusion's simulation tick. A teleport issued
             // directly from the Ready button's Unity Update can be overwritten by
             // the next NetworkTransform snapshot with the old position.
@@ -219,6 +238,52 @@ namespace AvocadoShark
             else if (RacePhase == RaceRunning && FinishedPlayers.Count >= GetActiveRaceParticipantCount())
             {
                 RacePhase = RaceFinished;
+            }
+        }
+
+        internal bool IsNetworkSwingPickup(EquipHotspot pickup) => RefreshSwingPickups() && swingPickups.Contains(pickup);
+
+        private bool RefreshSwingPickups()
+        {
+            if (_sceneSwitchInProgress)
+                return false;
+            if (swingPickupScene.IsValid() && swingPickupScene.isLoaded)
+                return true;
+            if (!RaceMapCatalog.TryGetLoadedMap(out swingPickupScene))
+                return false;
+
+            swingPickups.Clear();
+            var roots = swingPickupScene.GetRootGameObjects();
+            Array.Sort(roots, (left, right) => left.transform.GetSiblingIndex().CompareTo(right.transform.GetSiblingIndex()));
+            foreach (var root in roots)
+            {
+                foreach (var pickup in root.GetComponentsInChildren<EquipHotspot>(true))
+                {
+                    if (pickup.item is not SwingHookItem)
+                        continue;
+                    if (swingPickups.Count == 64)
+                    {
+                        Debug.LogWarning("Only the first 64 Swing Hook pickups are synchronized in this map.", this);
+                        return true;
+                    }
+                    swingPickups.Add(pickup);
+                }
+            }
+            return true;
+        }
+
+        public override void Render()
+        {
+            if (HasStateAuthority || Runner.GameMode != GameMode.Client || !RefreshSwingPickups() ||
+                SwingPickupMap != swingPickupScene.buildIndex)
+                return;
+
+            ulong collected = CollectedSwingPickups;
+            for (int i = 0; i < swingPickups.Count; i++)
+            {
+                var pickup = swingPickups[i];
+                if ((collected & (1UL << i)) != 0 && pickup != null && pickup.gameObject.activeSelf)
+                    pickup.gameObject.SetActive(false);
             }
         }
 

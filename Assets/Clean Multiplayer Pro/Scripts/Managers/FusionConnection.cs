@@ -20,6 +20,7 @@ using UnityEngine.InputSystem;
 using FS_Core;
 using FS_LocomotionSystem;
 using FS_ParkourSystem;
+using FS_SwingSystem;
 
 namespace AvocadoShark
 {
@@ -774,6 +775,10 @@ namespace AvocadoShark
                 var grapple = playerObject.GetComponentInChildren<GrapplingHookController>(true);
                 if (grapple != null && grapple.isActiveAndEnabled)
                     grapple.WriteNetworkInput(ref data);
+
+                var swing = playerObject.GetComponentInChildren<SwingController>(true);
+                if (swing != null && swing.isActiveAndEnabled)
+                    swing.WriteNetworkInput(ref data);
             }
 
             if (logInputDiagnostics && Time.frameCount - _lastInputDiagnosticFrame >= 120)

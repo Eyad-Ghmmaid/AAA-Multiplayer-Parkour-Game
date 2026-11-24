@@ -1,4 +1,5 @@
 using FS_Core;
+using FS_InteractionSystem;
 using System.Text;
 using System.Threading.Tasks;
 #if UNITY_EDITOR
@@ -100,6 +101,7 @@ namespace FS_LocomotionSystem
         EnvironmentScanner environmentScanner;
         LocomotionInputManager inputManager;
         ItemEquipper itemEquipper;
+        InteractionExecutor interactionExecutor;
         LocomotionCore locomotionCore;
 
 
@@ -113,6 +115,7 @@ namespace FS_LocomotionSystem
             characterCapsule = GetComponent<CharacterCapsule>();
             inputManager = GetComponent<LocomotionInputManager>();
             itemEquipper = GetComponent<ItemEquipper>();
+            interactionExecutor = GetComponent<InteractionExecutor>();
             locomotionCore = GetComponent<LocomotionCore>();
             // Animator IK can run before Start. Cache the camera in Awake so the
             // callback never reads an uninitialized camera reference.
@@ -181,6 +184,17 @@ namespace FS_LocomotionSystem
             var offset = Vector3.Distance(hips.position, head.position);
             animator.SetLookAtPosition(cameraGameObject.transform.position + cameraGameObject.transform.forward * (5f) + new Vector3(0, offset, 0));
             //animator.SetLookAtWeight(headIK);
+        }
+
+        private void LateUpdate()
+        {
+            if (itemEquipper?.ActionStowedItem == null || !playerController.isActiveAndEnabled ||
+                PreventAllSystems || WaitToStartSystem || playerController.Damagable?.IsDead == true ||
+                playerController.FocusedScript != null || playerController.CurrentSystemState != SystemState.Locomotion ||
+                locomotionCore.ActionExecutor.IsBusy || interactionExecutor?.HandsAreBusy == true)
+                return;
+
+            itemEquipper.TryRestoreActionStowedItem();
         }
 
         public override void HandleFixedUpdate()
@@ -374,7 +388,7 @@ namespace FS_LocomotionSystem
             if (equippedItem != null && equippedItem.unEquipDuringActions)
             {
                 itemEquipper.PreventItemSwitching = false;
-                itemEquipper.UnEquipItem(false);
+                itemEquipper.UnEquipItem(false, forHandsFreeAction: true);
                 itemEquipper.PreventItemSwitching = true;
             }
             else if (equippedItem != null)

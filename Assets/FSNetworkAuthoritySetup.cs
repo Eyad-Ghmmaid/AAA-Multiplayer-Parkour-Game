@@ -3,6 +3,8 @@ using UnityEngine;
 using FS_Core;
 using FS_LocomotionSystem;
 using FS_ParkourSystem;
+using FS_InteractionSystem;
+using FS_SwingSystem;
 using FC_ParkourSystem;
 using AvocadoShark;
 
@@ -31,13 +33,18 @@ public class FSNetworkAuthoritySetup : NetworkBehaviour
     private NetworkMecanimAnimator networkAnimator;
     private bool isLocalInputProxy;
     private GrapplingHookController grapplingHook;
+    private SwingController swingController;
+    private HotspotController hotspotController;
 
     [Networked] private GrapplePresentation NetworkGrapple { get; set; }
+    [Networked] private RopeSwingPresentation NetworkSwing { get; set; }
 
     public override void Spawned()
     {
         raceManager = FindAnyObjectByType<InGame_Manager>();
         grapplingHook = GetComponentInChildren<GrapplingHookController>(true);
+        swingController = GetComponentInChildren<SwingController>(true);
+        hotspotController = GetComponentInChildren<HotspotController>(true);
         bool hasStateAuthority = Object.HasStateAuthority;
         bool hasInputAuthority = Object.HasInputAuthority;
 
@@ -70,6 +77,7 @@ public class FSNetworkAuthoritySetup : NetworkBehaviour
         // is used in this mode.
         if (Runner.GameMode == GameMode.Shared || Runner.GameMode == GameMode.Single)
         {
+            swingController?.ConfigureNetwork(hasStateAuthority, hasStateAuthority, false);
             if (playerController != null)
                 playerController.enabled = hasStateAuthority;
 
@@ -89,6 +97,17 @@ public class FSNetworkAuthoritySetup : NetworkBehaviour
         // The Host's own player reads its camera and controls locally. Only remote
         // player objects receive values through Fusion's input stream.
         bool receivesAuthorityInput = isHostOrServer && hasStateAuthority && !hasInputAuthority;
+        swingController?.ConfigureNetwork(hasStateAuthority, hasInputAuthority, receivesAuthorityInput);
+        if (hotspotController != null)
+        {
+            hotspotController.UseExternalInteraction = receivesAuthorityInput;
+            hotspotController.ShowLocalHotspots = hasInputAuthority;
+            hotspotController.PreviewOnly = hasInputAuthority && !hasStateAuthority;
+            if (hotspotController.PreviewOnly)
+                hotspotController.HotspotFilter = hotspot => hotspot is EquipHotspot { item: SwingHookItem };
+            if (!hasStateAuthority && !hasInputAuthority)
+                hotspotController.enabled = false;
+        }
 
         // This controller is simulated only by State Authority. Enable Fusion's
         // transform forecast on remote presentations so render frames between Host
@@ -200,6 +219,9 @@ public class FSNetworkAuthoritySetup : NetworkBehaviour
         else if (NetworkGrapple.Phase != GrapplePhase.Idle)
             NetworkGrapple = default;
 
+        NetworkSwing = swingController != null && swingController.isActiveAndEnabled
+            ? swingController.CapturePresentation() : default;
+
         // Shared Mode remains on the existing local-authority path. In Host/Server
         // mode, the Host feeds remote players from Fusion input while retaining the
         // FS controller as the only writer of their movement.
@@ -217,6 +239,13 @@ public class FSNetworkAuthoritySetup : NetworkBehaviour
         // Fail closed in Host/Server mode if the race authority is missing; this
         // component must never silently accept remote movement without validation.
         bool raceAllowsMovement = raceManager != null && raceManager.CanPlayerMoveOnAuthority(Object.InputAuthority);
+        bool allowsSwingInput = raceAllowsMovement && (inputManager == null || !inputManager.RaceInputLocked);
+        if (swingController != null && swingController.isActiveAndEnabled)
+        {
+            swingController.ReadNetworkInput(data, hasInput, allowsSwingInput);
+            if (allowsSwingInput && hotspotController != null && swingController.ConsumeRemotePickup())
+                hotspotController.TryInteractWithPickup(raceManager.IsNetworkSwingPickup);
+        }
         if (grapplingHook != null && grapplingHook.isActiveAndEnabled)
             grapplingHook.ReadAuthorityInput(data, hasInput,
                 raceAllowsMovement && (inputManager == null || !inputManager.RaceInputLocked));
@@ -273,7 +302,12 @@ public class FSNetworkAuthoritySetup : NetworkBehaviour
 
     public override void Render()
     {
-        if (HasStateAuthority || grapplingHook == null)
+        if (HasStateAuthority)
+            return;
+
+        if (swingController != null)
+            RenderSwing();
+        if (grapplingHook == null)
             return;
 
         var visible = NetworkGrapple;
@@ -293,6 +327,19 @@ public class FSNetworkAuthoritySetup : NetworkBehaviour
             }
         }
         grapplingHook.SetRemotePresentation(visible);
+    }
+
+    private void RenderSwing()
+    {
+        var visible = NetworkSwing;
+        if (TryGetSnapshotsBuffers(out var from, out var to, out float alpha))
+        {
+            var (earlier, later) = GetPropertyReader<RopeSwingPresentation>(nameof(NetworkSwing)).Read(from, to);
+            visible = alpha >= 1f ? later : earlier;
+            if (earlier.HasCast && later.HasCast && earlier.Shot == later.Shot)
+                visible.HookPoint = Vector3.Lerp(earlier.HookPoint, later.HookPoint, alpha);
+        }
+        swingController.SetRemotePresentation(visible);
     }
 
     private void Update()
@@ -375,6 +422,11 @@ public class FSNetworkAuthoritySetup : NetworkBehaviour
         {
             grapplingHook.CancelForTeleport();
             NetworkGrapple = grapplingHook.CapturePresentation();
+        }
+        if (swingController != null && swingController.InAction)
+        {
+            swingController.ExitFromSwing();
+            NetworkSwing = swingController.CapturePresentation();
         }
         var characterController = networkedPlayerTransform.GetComponent<CharacterController>();
         var rigidbody = networkedPlayerTransform.GetComponent<Rigidbody>();

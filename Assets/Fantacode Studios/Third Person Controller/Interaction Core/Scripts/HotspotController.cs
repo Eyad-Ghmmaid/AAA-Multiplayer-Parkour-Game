@@ -35,6 +35,9 @@ namespace FS_InteractionSystem
         public Func<Hotspot, bool> HotspotFilter { get; set; }
 
         public Hotspot ClosestHotspot => closestHotspot;
+        internal bool ShowLocalHotspots { get; set; } = true;
+        internal bool PreviewOnly { get; set; }
+        internal bool UseExternalInteraction { get; set; }
 
         public override SystemState State => SystemState.Hotspot;
 
@@ -117,6 +120,12 @@ namespace FS_InteractionSystem
 
         private void LateUpdate()
         {
+            if (PreviewOnly)
+            {
+                DetectHotspots();
+                return;
+            }
+
             if (playerController.FocusedScript != null && playerController.FocusedSystemState == SystemState.Locomotion)
                 HandleUpdate();
         }
@@ -128,10 +137,22 @@ namespace FS_InteractionSystem
 
             DetectHotspots();
 
-            if (inputManager != null && inputManager.InteractionButtonDown() && closestHotspot != null && Time.timeScale > 0)
+            if (!PreviewOnly && !UseExternalInteraction && inputManager != null &&
+                inputManager.InteractionButtonDown() && closestHotspot != null && Time.timeScale > 0)
             {
                 closestHotspot.Interact(this);
             }
+        }
+
+        internal void TryInteractWithPickup(Predicate<EquipHotspot> acceptsPickup)
+        {
+            if (damagable?.CurrentHealth <= 0 || player.PreventAllSystems || Time.timeScale <= 0 ||
+                playerController.CurrentSystemState != SystemState.Locomotion)
+                return;
+
+            DetectHotspots();
+            if (closestHotspot is EquipHotspot pickup && acceptsPickup(pickup))
+                pickup.Interact(this);
         }
 
         void DetectHotspots()
@@ -159,7 +180,7 @@ namespace FS_InteractionSystem
             var newClosest = GetClosestHotspot();
 
             // Toggle indicators + focus notifications
-            if (previousClosest != newClosest)
+            if (ShowLocalHotspots && previousClosest != newClosest)
             {
                 if (previousClosest != null)
                 {

@@ -1493,6 +1493,8 @@ GameObject:
   - component: {fileID: 2269997654753091448}
   - component: {fileID: 4489207361145281702}
   - component: {fileID: 6364852478059160041}
+  - component: {fileID: 1527490071464531306}
+  - component: {fileID: 480464889993173485}
   m_Layer: 8
   m_Name: Player
   m_TagString: Player
@@ -1536,6 +1538,7 @@ MonoBehaviour:
   - {fileID: 781401647338987147}
   - {fileID: 1375471749704258411}
   - {fileID: 6364852478059160041}
+  - {fileID: 480464889993173485}
   <CurrentSystemState>k__BackingField: 0
   _editorSearchString: 
   cameraGameObject: {fileID: 7413941264763873406}
@@ -1569,6 +1572,9 @@ MonoBehaviour:
   <MinJumpDistance>k__BackingField: 0.8
   jumpToTheClosestLedge: 0
   alwaysUsePlayerForward: 0
+  <SwingLedgeLayer>k__BackingField:
+    serializedVersion: 2
+    m_Bits: 1
   heightRayLength: 4
   obstacleCheckRange: 0.7
   ledgeHeightThreshold: 1
@@ -2306,9 +2312,9 @@ MonoBehaviour:
   Animator: {fileID: 1574142921865167272}
   ApplyTiming: 0
   SyncSettings: 127
-  StateHashes: 00000000325a708301e955b43aed0ef46d307e491ed7f068a1f09421c128adb23163827f89f787207c94cad8009440f6f20b573708c3b7d9ddb69ca248b2e429503bdf81b0ff41a26f5c85b172a221672121971214c8d5343ac517c27f79d4ff1d60f5718455fa73407a5a4039d7c78e54f6f52d564c56c914e11fa0d52f5dd4e05c352100a81b1dd6ca43ba86a3bc03817aa83e0e9a3be170596196a7735098b6281fbbf981acf93ffa62c582ca962044b1581c0d6a97f1466aa558acfc6842a8281597f973e37c63b48c51b2f4795f28331672987881c32c7e5326840e3466d7f69d54cabede359195145ca98f4dfc5726768ed501ca77c5473a55a1bd136df245ba5f7fe103cd34e13164c31bb02675b2e0d4a26419218ed48d50
+  StateHashes: 00000000325a708301e955b415c200cc196402820e70bc9967f3f586e43433d09ba442e44877d46f44b57c373aed0ef46d307e491ed7f068a1f09421c128adb23163827f89f787207c94cad8009440f6f20b573708c3b7d9ddb69ca248b2e429503bdf81b0ff41a26f5c85b172a221672121971214c8d5343ac517c27f79d4ff1d60f5718455fa73407a5a4039d7c78e54f6f52d564c56c914e11fa0d52f5dd4e05c352100a81b1dd6ca43ba86a3bc03817aa83e0e9a3be170596196a7735098b6281fbbf981acf93ffa62c582ca962044b1581c0d6a97f1466aa558acfc6842a8281597f973e37c63b48c51b2f4795f28331672987881c32c7e5326840e3466d7f69d54cabede359195145ca98f4dfc5726768ed501ca77c5473a55a1bd136df245ba5f7fe103cd34e13164c31bb02675b2e0d4a26419218ed48d50
   TriggerHashes: 00000000
-  TotalWords: 16
+  TotalWords: 19
 --- !u!114 &4489207361145281702
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -2381,6 +2387,86 @@ MonoBehaviour:
   reticleOverride: {fileID: 0}
   readyColor: {r: 0.75, g: 1, b: 0.54, a: 1}
   idleColor: {r: 1, g: 1, b: 1, a: 0.54}
+--- !u!114 &1527490071464531306
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1867889191492008202}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 33f9d940babc92e4a995df0da79a6500, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::FS_SwingSystem.SwingInputManager
+  swingUI: {fileID: 0}
+  hookInput:
+    key: 102
+    button: 
+    uiButton: {fileID: 0}
+  hookReleaseInput:
+    key: 102
+    button: 
+    uiButton: {fileID: 0}
+  ropeClimbModifierInput:
+    key: 304
+    button: 
+    uiButton: {fileID: 0}
+--- !u!114 &480464889993173485
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1867889191492008202}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: d7b1df5f2a10c5742a433c9e89b98a70, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::FS_SwingSystem.SwingController
+  replicatedHook: {fileID: 11400000, guid: 42fafb99f90fabe4288d73d21a13f277, type: 2}
+  swingWithoutEquip: 0
+  unEquipAfterSwing: 0
+  minDistance: 2
+  maxAngleForClimb: 15
+  hookHoldingClip: {fileID: 7825730608530474273, guid: ee7d3c6fb0b3eb743a03455db2c18324, type: 3}
+  ropeHoldOffsetRight: {x: 0, y: 0, z: 0}
+  ropeHoldOffsetLeft: {x: 0, y: 0, z: 0}
+  ropeAttachTransformInBody: {fileID: 0}
+  ropeRadius: 0.025
+  ropeMaterial: {fileID: 2100000, guid: 374be49d2aac21541a2db4a8700832ce, type: 2}
+  ropeResolution: 50
+  ropeLength: 10
+  ropeWidth: 0.1
+  dampening: 0.5
+  throwHeight: 1
+  throwDuration: 0.5
+  swingForce: 4
+  swingRotationSpeed: 100
+  climbSpeed: 3
+  climbStepDistance: 0.75
+  forwardLandForceMultiplier: 1
+  upwardLandForceMultiplier: 2
+  damping: 0.5
+  gravity: -20
+  collisionFriction: 0.2
+  crosshairPrefab: {fileID: 6498772739504947881, guid: 48c836945ac53724088f818777735b0f, type: 3}
+  crosshairSize: 0.3
+  cameraShakeAmount: 0.2
+  cameraShakeDuration: 0.3
+  RopeReleased:
+    m_PersistentCalls:
+      m_Calls: []
+  RopeHooked:
+    m_PersistentCalls:
+      m_Calls: []
+  SwingStarted:
+    m_PersistentCalls:
+      m_Calls: []
+  ExitedFromSwing:
+    m_PersistentCalls:
+      m_Calls: []
+  debug: 0
 --- !u!1 &1953128215061339965
 GameObject:
   m_ObjectHideFlags: 0

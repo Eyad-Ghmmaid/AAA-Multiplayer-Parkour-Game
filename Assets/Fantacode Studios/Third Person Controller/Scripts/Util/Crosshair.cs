@@ -8,24 +8,28 @@ namespace FS_Core
     public class Crosshair : MonoBehaviour
     {
         public float size = 1.0f;
-        private Camera mainCamera;
+        public Transform View { get; set; }
         private SpriteRenderer spriteRenderer;
         private MeshRenderer meshRenderer;
 
         void Start()
         {
-            mainCamera = Camera.main;
+            if (View == null && Camera.main != null)
+                View = Camera.main.transform;
             spriteRenderer = GetComponent<SpriteRenderer>();
             meshRenderer = GetComponent<MeshRenderer>();
         }
 
         public void Update()
         {
-            transform.rotation = Quaternion.LookRotation(mainCamera.transform.forward);
-            float distance = Vector3.Distance(transform.position, mainCamera.transform.position);
+            if (View == null)
+                return;
+            transform.rotation = View.rotation;
+            float distance = Vector3.Distance(transform.position, View.position);
             float scaleFactor = (distance / 5) * size;
-            var y = spriteRenderer != null ? spriteRenderer.sprite.bounds.size.y : GetMeshBoundsSize();
-            transform.localScale = Vector3.one * scaleFactor / y;
+            var y = spriteRenderer != null && spriteRenderer.sprite != null
+                ? spriteRenderer.sprite.bounds.size.y : GetMeshBoundsSize();
+            transform.localScale = Vector3.one * scaleFactor / Mathf.Max(0.001f, y);
         }
 
         public float GetMeshBoundsSize()

@@ -34,6 +34,8 @@ namespace FS_Core
         [Tooltip("If true, the item will be unequipped automatically during specific actions like parkour, climbing, etc.")]
         public bool unEquipDuringActions;
 
+        public virtual bool RestoreAfterActionStow => false;
+
         [Tooltip("If true, this item is dual-wielded (used in both hands).")]
         public bool isDualItem = false;
 

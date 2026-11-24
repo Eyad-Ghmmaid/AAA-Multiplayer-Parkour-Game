@@ -10,6 +10,7 @@ TagManager:
   - Slide
   - NavmeshLink
   - NavmeshSurface
+  - Grappleable
   layers:
   - Default
   - TransparentFX
@@ -34,7 +35,7 @@ TagManager:
   - Deadbody
   - EnvironmentFinisherProp
   - OcuppantObject
-  - 
+  - Grappleable
   - 
   - 
   - 

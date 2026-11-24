@@ -1,0 +1,18 @@
+fileFormatVersion: 2
+guid: 67853adabd09e4544a4d8454062cb0e5
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences: []
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 388274
+  packageName: FS Rope Swinging System 2
+  packageVersion: 2.0.2
+  assetPath: Assets/Fantacode Studios/Rope Swinging System/Scripts/Editor/SwingControllerEditor.cs
+  uploadId: 996614
